@@ -17,16 +17,13 @@ import matplotlib.pyplot as plt
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from drift.cosmology import get_cosmology, get_linear_power
-from drift.eft_bias import DSSplitBinEFT, GalaxyEFTParams
-from drift.eft_models import pqg_eft_mu
-from drift.one_loop import compute_one_loop_matter
-from drift.multipoles import compute_multipoles
+from drift.cosmology import get_cosmology
+from drift.emulator import TemplateEmulator
 from drift.io import load_measurements
 
 SPACE      = "redshift"         # "redshift" | "real"
 DS_MODEL   = "phenomenological" # "baseline" | "rsd_selection" | "phenomenological"
-MODEL_MODE = "eft_lite"         # "tree_only" | "eft_lite" | "eft_full"
+MODEL_MODE = "tree_only"         # "tree_only" | "eft_lite" | "eft_full"
 
 _suffix     = "_real" if SPACE == "real" else ""
 CHAINS_PATH = (
@@ -63,12 +60,14 @@ def _build_params(ds_model, model_mode, quantiles):
 PARAM_NAMES, LABELS = _build_params(DS_MODEL, MODEL_MODE, QUANTILES)
 
 
-def make_eft_theory_model(cosmo, k, p1loop, ells, quantiles, ds_model, mode):
-    """Return a callable theta -> flat_data_vector.
-
-    p1loop is precomputed outside the MCMC loop (None for tree_only).
-    """
+def make_eft_theory_model(cosmo, k, ells, quantiles, ds_model, mode):
+    """Return a callable theta -> flat_data_vector using TemplateEmulator."""
     n_bq = len(quantiles)
+    emulator = TemplateEmulator(
+        cosmo, k, ells=ells, z=Z, R=R,
+        kernel=KERNEL, space=SPACE,
+        ds_model=ds_model, mode=mode,
+    )
 
     def theory(theta):
         b1 = theta[0]
@@ -81,20 +80,14 @@ def make_eft_theory_model(cosmo, k, p1loop, ells, quantiles, ds_model, mode):
             s0 = theta[idx]; idx += 1
         beta_q_vals = theta[idx:] if ds_model == "phenomenological" else [0.0] * n_bq
 
-        gal = GalaxyEFTParams(b1=float(b1), c0=float(c0), s0=float(s0))
-        lk = {"p1loop_precomputed": p1loop} if p1loop is not None else {}
-        vec = []
-        for q, bq1, betaq in zip(quantiles, bq1_vals, beta_q_vals):
-            ds_bin = DSSplitBinEFT(label=f"DS{q}", bq1=float(bq1), beta_q=float(betaq))
-            poles = compute_multipoles(
-                k, pqg_eft_mu,
-                z=Z, cosmo=cosmo, ds_params=ds_bin, gal_params=gal,
-                R=R, kernel=KERNEL, ells=ells, space=SPACE,
-                ds_model=ds_model, mode=mode, loop_kwargs=lk,
-            )
-            for ell in ells:
-                vec.append(poles[ell])
-        return np.concatenate(vec)
+        params = {
+            "b1": float(b1),
+            "bq1": [float(v) for v in bq1_vals],
+            "c0": float(c0),
+            "s0": float(s0),
+            "beta_q": [float(v) for v in beta_q_vals],
+        }
+        return emulator.predict(params)
 
     return theory
 
@@ -126,15 +119,8 @@ def main():
 
     # Evaluate theory at best-fit
     cosmo = get_cosmology()
-    p1loop = None
-    if MODEL_MODE in ("eft_lite", "eft_full"):
-        print("Precomputing one-loop matter power spectrum ...")
-        plin_func = lambda kk: get_linear_power(cosmo, kk, Z)
-        loop_result = compute_one_loop_matter(k, plin_func)
-        p1loop = loop_result["p1loop"]
-        print("  done.")
     theory_fn = make_eft_theory_model(
-        cosmo, k, p1loop, ells=ELLS,
+        cosmo, k, ells=ELLS,
         quantiles=QUANTILES, ds_model=DS_MODEL, mode=MODEL_MODE,
     )
     pred      = theory_fn(theta_bf)

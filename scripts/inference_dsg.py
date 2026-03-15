@@ -5,6 +5,7 @@ from density-split × galaxy multipole measurements in outputs/dsg_measured.hdf5
 Cosmology is fixed to Planck 2018.
 """
 
+import argparse
 import sys
 import numpy as np
 from pathlib import Path
@@ -15,11 +16,8 @@ from scipy.stats import uniform as sp_uniform
 import pocomc
 from pocomc import Sampler, Prior
 
-from drift.cosmology import get_cosmology, get_linear_power
-from drift.eft_bias import DSSplitBinEFT, GalaxyEFTParams
-from drift.eft_models import pqg_eft_mu
-from drift.one_loop import compute_one_loop_matter
-from drift.multipoles import compute_multipoles
+from drift.cosmology import get_cosmology
+from drift.emulator import TemplateEmulator
 from drift.io import load_measurements
 
 # ---------------------------------------------------------------------------
@@ -67,35 +65,72 @@ PARAM_NAMES, BOUNDS = _build_params(DS_MODEL, MODEL_MODE, QUANTILES)
 # ---------------------------------------------------------------------------
 # Theory model
 # ---------------------------------------------------------------------------
-def make_eft_theory_model(cosmo, k, p1loop, ells, quantiles, ds_model, mode):
-    """Return a callable theta -> flat_data_vector.
+def _unpack_theta(theta, n_bq, mode, ds_model):
+    """Unpack flat parameter vector into a dict."""
+    b1 = theta[0]
+    bq1_vals = theta[1:1 + n_bq]
+    idx = 1 + n_bq
+    c0, s0 = 0.0, 0.0
+    if mode in ("eft_lite", "eft_full"):
+        c0 = theta[idx]; idx += 1
+    if mode == "eft_full":
+        s0 = theta[idx]; idx += 1
+    beta_q_vals = theta[idx:] if ds_model == "phenomenological" else [0.0] * n_bq
+    return dict(b1=float(b1), bq1_vals=bq1_vals, c0=float(c0), s0=float(s0),
+                beta_q_vals=beta_q_vals)
 
-    p1loop is precomputed outside the MCMC loop (None for tree_only).
+
+def make_eft_theory_model(cosmo, k, ells, quantiles, ds_model, mode):
+    """Return a callable theta -> flat_data_vector using TemplateEmulator."""
+    n_bq = len(quantiles)
+    emulator = TemplateEmulator(
+        cosmo, k, ells=ells, z=Z, R=R,
+        kernel=KERNEL, space=SPACE,
+        ds_model=ds_model, mode=mode,
+    )
+
+    def theory(theta):
+        p = _unpack_theta(theta, n_bq, mode, ds_model)
+        params = {
+            "b1": p["b1"],
+            "bq1": [float(v) for v in p["bq1_vals"]],
+            "c0": p["c0"],
+            "s0": p["s0"],
+            "beta_q": [float(v) for v in p["beta_q_vals"]],
+        }
+        return emulator.predict(params)
+
+    return theory
+
+
+def make_direct_theory_model(cosmo, k, ells, quantiles, ds_model, mode):
+    """Return a callable theta -> flat_data_vector using direct GL quadrature.
+
+    Slower reference implementation — useful as a sanity-check against the
+    template emulator.
     """
+    from drift.eft_bias import DSSplitBinEFT, GalaxyEFTParams
+    from drift.eft_models import pqg_eft_mu
+    from drift.multipoles import compute_multipoles
+
     n_bq = len(quantiles)
 
     def theory(theta):
-        b1 = theta[0]
-        bq1_vals = theta[1:1 + n_bq]
-        idx = 1 + n_bq
-        c0, s0 = 0.0, 0.0
-        if mode in ("eft_lite", "eft_full"):
-            c0 = theta[idx]; idx += 1
-        if mode == "eft_full":
-            s0 = theta[idx]; idx += 1
-        beta_q_vals = theta[idx:] if ds_model == "phenomenological" else [0.0] * n_bq
-
-        gal = GalaxyEFTParams(b1=float(b1), c0=float(c0), s0=float(s0))
-        lk = {"p1loop_precomputed": p1loop} if p1loop is not None else {}
+        p = _unpack_theta(theta, n_bq, mode, ds_model)
+        gal = GalaxyEFTParams(b1=p["b1"], c0=p["c0"], s0=p["s0"])
         vec = []
-        for q, bq1, betaq in zip(quantiles, bq1_vals, beta_q_vals):
+        for q, bq1, betaq in zip(quantiles, p["bq1_vals"], p["beta_q_vals"]):
             ds_bin = DSSplitBinEFT(label=f"DS{q}", bq1=float(bq1), beta_q=float(betaq))
-            poles = compute_multipoles(
-                k, pqg_eft_mu,
-                z=Z, cosmo=cosmo, ds_params=ds_bin, gal_params=gal,
-                R=R, kernel=KERNEL, ells=ells, space=SPACE,
-                ds_model=ds_model, mode=mode, loop_kwargs=lk,
-            )
+
+            def model(kk, mu, _ds=ds_bin, _gal=gal):
+                return pqg_eft_mu(
+                    kk, mu, z=Z, cosmo=cosmo,
+                    ds_params=_ds, gal_params=_gal,
+                    R=R, kernel=KERNEL, space=SPACE,
+                    ds_model=ds_model, mode=mode,
+                )
+
+            poles = compute_multipoles(k, model, ells=ells)
             for ell in ells:
                 vec.append(poles[ell])
         return np.concatenate(vec)
@@ -127,6 +162,17 @@ def make_log_likelihood(data_y, precision_matrix, theory_fn):
 # Main
 # ---------------------------------------------------------------------------
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--no-emulator",
+        action="store_true",
+        help=(
+            "Use direct Gauss-Legendre quadrature instead of the analytic "
+            "template emulator. Slower but useful as a sanity check."
+        ),
+    )
+    args = parser.parse_args()
+
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     # 1. Load measurements
@@ -145,21 +191,21 @@ def main():
     # 2. Cosmology
     cosmo = get_cosmology()
 
-    # 3. Precompute one-loop matter power spectrum (once, before sampler)
-    p1loop = None
-    if MODEL_MODE in ("eft_lite", "eft_full"):
-        print("Precomputing one-loop matter power spectrum ...")
-        plin_func = lambda kk: get_linear_power(cosmo, kk, Z)
-        loop_result = compute_one_loop_matter(k, plin_func)
-        p1loop = loop_result["p1loop"]
-        print("  done.")
-
-    # 4. Theory model and covariance
+    # 3. Theory model
     print(f"  DS model: {DS_MODEL},  EFT mode: {MODEL_MODE}")
-    theory_fn = make_eft_theory_model(
-        cosmo, k, p1loop, ells=ELLS,
-        quantiles=QUANTILES, ds_model=DS_MODEL, mode=MODEL_MODE,
-    )
+    if args.no_emulator:
+        print("Using direct GL quadrature (--no-emulator) ...")
+        theory_fn = make_direct_theory_model(
+            cosmo, k, ells=ELLS,
+            quantiles=QUANTILES, ds_model=DS_MODEL, mode=MODEL_MODE,
+        )
+    else:
+        print("Building template emulator ...")
+        theory_fn = make_eft_theory_model(
+            cosmo, k, ells=ELLS,
+            quantiles=QUANTILES, ds_model=DS_MODEL, mode=MODEL_MODE,
+        )
+    print("  done.")
     cov = make_diagonal_cov(data_y)
     precision_matrix = np.linalg.inv(cov)
 
