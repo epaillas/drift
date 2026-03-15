@@ -7,6 +7,7 @@ the measured multipoles from outputs/dsg_measured.hdf5.
 Saves to outputs/inference_dsg/bestfit_multipoles.png.
 """
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -20,10 +21,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from drift.cosmology import get_cosmology
 from drift.emulator import TemplateEmulator
 from drift.io import load_measurements
+from inference_dsg import _parse_kmax, _build_data_mask
 
 SPACE      = "redshift"         # "redshift" | "real"
 DS_MODEL   = "phenomenological" # "baseline" | "rsd_selection" | "phenomenological"
-MODEL_MODE = "tree_only"         # "tree_only" | "eft_lite" | "eft_full"
+MODEL_MODE = "eft_full"         # "tree_only" | "eft_lite" | "eft_full"
 
 _suffix     = "_real" if SPACE == "real" else ""
 CHAINS_PATH = (
@@ -54,6 +56,9 @@ def _build_params(ds_model, model_mode, quantiles):
     if ds_model == "phenomenological":
         param_names += [f"beta_q_{q}" for q in quantiles]
         labels      += [rf"$\beta_{{q,{q}}}$" for q in quantiles]
+    if model_mode in ("eft_lite", "eft_full"):
+        param_names += [f"bq_nabla2_{q}" for q in quantiles]
+        labels      += [rf"$b_{{q\nabla^2,{q}}}$" for q in quantiles]
     return param_names, labels
 
 
@@ -78,7 +83,11 @@ def make_eft_theory_model(cosmo, k, ells, quantiles, ds_model, mode):
             c0 = theta[idx]; idx += 1
         if mode == "eft_full":
             s0 = theta[idx]; idx += 1
-        beta_q_vals = theta[idx:] if ds_model == "phenomenological" else [0.0] * n_bq
+        if ds_model == "phenomenological":
+            beta_q_vals = theta[idx:idx + n_bq]; idx += n_bq
+        else:
+            beta_q_vals = [0.0] * n_bq
+        bq_nabla2_vals = theta[idx:idx + n_bq] if mode in ("eft_lite", "eft_full") else [0.0] * n_bq
 
         params = {
             "b1": float(b1),
@@ -86,6 +95,7 @@ def make_eft_theory_model(cosmo, k, ells, quantiles, ds_model, mode):
             "c0": float(c0),
             "s0": float(s0),
             "beta_q": [float(v) for v in beta_q_vals],
+            "bq_nabla2": [float(v) for v in bq_nabla2_vals],
         }
         return emulator.predict(params)
 
@@ -93,6 +103,19 @@ def make_eft_theory_model(cosmo, k, ells, quantiles, ds_model, mode):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--kmax",
+        nargs="+",
+        default=None,
+        metavar="[ELL:]VALUE",
+        help=(
+            "Maximum k to include in the plot. Either a single float (applied "
+            "to all multipoles) or 'ell:value' pairs, e.g. '0:0.3 2:0.2'."
+        ),
+    )
+    args = parser.parse_args()
+
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     # Load chains
@@ -107,6 +130,9 @@ def main():
 
     # Load measurements
     k, measured = load_measurements(MEAS_PATH, nquantiles=max(QUANTILES), ells=ELLS)
+
+    # Build kmax mask
+    kmax_dict = _parse_kmax(args.kmax, ELLS)
 
     # Compute per-bin uncertainties from the same diagonal covariance as inference
     errors = {}
@@ -148,14 +174,16 @@ def main():
     for q, color in zip(QUANTILES, colors):
         label = f"DS{q}"
         for ax, ell in zip(axes, ELLS):
+            kmax_val = kmax_dict.get(ell, np.inf)
+            kmask = k <= kmax_val
             add_label = ell == ELLS[-1]
             ax.errorbar(
-                k, k * measured[label][ell],
-                yerr=k * errors[label][ell],
+                k[kmask], k[kmask] * measured[label][ell][kmask],
+                yerr=k[kmask] * errors[label][ell][kmask],
                 fmt="o", ms=3, color=color, elinewidth=0.8, capsize=2, zorder=3,
                 label=label if add_label else None,
             )
-            ax.plot(k, k * theory_bf[label][ell], color=color)
+            ax.plot(k[kmask], k[kmask] * theory_bf[label][ell][kmask], color=color)
 
     for ax, ell in zip(axes, ELLS):
         ax.set_title(rf"$k\,P_{ell}(k)$")

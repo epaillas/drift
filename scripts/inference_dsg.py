@@ -25,7 +25,7 @@ from drift.io import load_measurements
 # ---------------------------------------------------------------------------
 SPACE      = "redshift"         # "redshift" | "real"
 DS_MODEL   = "phenomenological" # "baseline" | "rsd_selection" | "phenomenological"
-MODEL_MODE = "eft_lite"         # "tree_only" | "eft_lite" | "eft_full"
+MODEL_MODE = "eft_full"         # "tree_only" | "eft_lite" | "eft_full"
 
 _suffix   = "_real" if SPACE == "real" else ""
 MEAS_PATH = Path(__file__).parents[1] / "outputs" / f"dsg_measured{_suffix}.hdf5"
@@ -38,6 +38,40 @@ R = 10.0
 KERNEL    = "gaussian"
 ELLS      = (0, 2)
 QUANTILES = (1, 5)
+
+
+def _parse_kmax(kmax_args, ells):
+    """Parse --kmax CLI values into {ell: float} dict.
+
+    Accepts either a single float (applied to all ells) or
+    'ell:value' pairs, e.g. ['0:0.3', '2:0.2'].
+    Returns {ell: kmax} for each ell in ells; missing ells get np.inf.
+    """
+    kmax_dict = {ell: np.inf for ell in ells}
+    if kmax_args is None:
+        return kmax_dict
+    if len(kmax_args) == 1 and ":" not in kmax_args[0]:
+        val = float(kmax_args[0])
+        return {ell: val for ell in ells}
+    for item in kmax_args:
+        ell_str, val_str = item.split(":")
+        kmax_dict[int(ell_str)] = float(val_str)
+    return kmax_dict
+
+
+def _build_data_mask(k, ells, quantiles, kmax_dict):
+    """Build a flat boolean mask matching the data vector ordering.
+
+    Data vector order: for q in quantiles, for ell in ells, k-values.
+    kmax_dict: {ell: kmax_value}; missing ells -> no cut (np.inf).
+    Returns np.ndarray of bool, shape (n_quantiles * n_ells * nk,).
+    """
+    segments = []
+    for _q in quantiles:
+        for ell in ells:
+            kmax = kmax_dict.get(ell, np.inf)
+            segments.append(k <= kmax)
+    return np.concatenate(segments)
 
 
 def _build_params(ds_model, model_mode, quantiles):
@@ -56,6 +90,9 @@ def _build_params(ds_model, model_mode, quantiles):
     if ds_model == "phenomenological":
         param_names += [f"beta_q_{q}" for q in quantiles]
         bounds = np.vstack([bounds, [[-2.0, 2.0] for _ in quantiles]])
+    if model_mode in ("eft_lite", "eft_full"):
+        param_names += [f"bq_nabla2_{q}" for q in quantiles]
+        bounds = np.vstack([bounds, [[-4.0, 4.0] for _ in quantiles]])
     return param_names, bounds
 
 
@@ -75,9 +112,13 @@ def _unpack_theta(theta, n_bq, mode, ds_model):
         c0 = theta[idx]; idx += 1
     if mode == "eft_full":
         s0 = theta[idx]; idx += 1
-    beta_q_vals = theta[idx:] if ds_model == "phenomenological" else [0.0] * n_bq
+    if ds_model == "phenomenological":
+        beta_q_vals = theta[idx:idx + n_bq]; idx += n_bq
+    else:
+        beta_q_vals = [0.0] * n_bq
+    bq_nabla2_vals = theta[idx:idx + n_bq] if mode in ("eft_lite", "eft_full") else [0.0] * n_bq
     return dict(b1=float(b1), bq1_vals=bq1_vals, c0=float(c0), s0=float(s0),
-                beta_q_vals=beta_q_vals)
+                beta_q_vals=beta_q_vals, bq_nabla2_vals=bq_nabla2_vals)
 
 
 def make_eft_theory_model(cosmo, k, ells, quantiles, ds_model, mode):
@@ -97,6 +138,7 @@ def make_eft_theory_model(cosmo, k, ells, quantiles, ds_model, mode):
             "c0": p["c0"],
             "s0": p["s0"],
             "beta_q": [float(v) for v in p["beta_q_vals"]],
+            "bq_nabla2": [float(v) for v in p["bq_nabla2_vals"]],
         }
         return emulator.predict(params)
 
@@ -119,8 +161,13 @@ def make_direct_theory_model(cosmo, k, ells, quantiles, ds_model, mode):
         p = _unpack_theta(theta, n_bq, mode, ds_model)
         gal = GalaxyEFTParams(b1=p["b1"], c0=p["c0"], s0=p["s0"])
         vec = []
-        for q, bq1, betaq in zip(quantiles, p["bq1_vals"], p["beta_q_vals"]):
-            ds_bin = DSSplitBinEFT(label=f"DS{q}", bq1=float(bq1), beta_q=float(betaq))
+        for q, bq1, betaq, bq_nabla2 in zip(
+            quantiles, p["bq1_vals"], p["beta_q_vals"], p["bq_nabla2_vals"]
+        ):
+            ds_bin = DSSplitBinEFT(
+                label=f"DS{q}", bq1=float(bq1),
+                beta_q=float(betaq), bq_nabla2=float(bq_nabla2),
+            )
 
             def model(kk, mu, _ds=ds_bin, _gal=gal):
                 return pqg_eft_mu(
@@ -171,6 +218,16 @@ def main():
             "template emulator. Slower but useful as a sanity check."
         ),
     )
+    parser.add_argument(
+        "--kmax",
+        nargs="+",
+        default=None,
+        metavar="[ELL:]VALUE",
+        help=(
+            "Maximum k to include in the fit. Either a single float (applied "
+            "to all multipoles) or 'ell:value' pairs, e.g. '0:0.3 2:0.2'."
+        ),
+    )
     args = parser.parse_args()
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -187,6 +244,17 @@ def main():
         for ell in ELLS
     ])
     print(f"  Data vector length: {len(data_y)}")
+
+    # Apply per-ell kmax masking
+    kmax_dict = _parse_kmax(args.kmax, ELLS)
+    mask = _build_data_mask(k, ELLS, QUANTILES, kmax_dict)
+    print("  kmax cuts:")
+    for ell in ELLS:
+        kmax_val = kmax_dict.get(ell, np.inf)
+        n_kept = (k <= kmax_val).sum()
+        print(f"    ell={ell}: kmax={kmax_val:.4g} h/Mpc  ({n_kept}/{len(k)} k-bins kept)")
+    data_y_masked = data_y[mask]
+    print(f"  Masked data vector length: {len(data_y_masked)}")
 
     # 2. Cosmology
     cosmo = get_cosmology()
@@ -206,11 +274,12 @@ def main():
             quantiles=QUANTILES, ds_model=DS_MODEL, mode=MODEL_MODE,
         )
     print("  done.")
-    cov = make_diagonal_cov(data_y)
+    theory_fn_masked = lambda theta: theory_fn(theta)[mask]
+    cov = make_diagonal_cov(data_y_masked)
     precision_matrix = np.linalg.inv(cov)
 
     # 5. Log-likelihood
-    log_likelihood = make_log_likelihood(data_y, precision_matrix, theory_fn)
+    log_likelihood = make_log_likelihood(data_y_masked, precision_matrix, theory_fn_masked)
 
     # 6. Prior (built from BOUNDS to stay in sync with _build_params)
     dists = [sp_uniform(loc=lo, scale=hi - lo) for lo, hi in BOUNDS]
