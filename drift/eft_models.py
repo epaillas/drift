@@ -5,7 +5,6 @@ from .cosmology import get_linear_power, get_growth_rate
 from .kernels import gaussian_kernel, tophat_kernel
 from .eft_bias import DSSplitBinEFT, GalaxyEFTParams
 from .eft_terms import galaxy_counterterm, ds_counterterm, stochastic_term
-from .one_loop import compute_one_loop_matter
 
 _VALID_MODES = ("tree_only", "eft_lite", "eft_full")
 _VALID_DS_MODELS = ("baseline", "rsd_selection", "phenomenological")
@@ -156,7 +155,6 @@ def pqg_eft_mu(
     space: str = "redshift",
     ds_model: str = "baseline",
     mode: str = "eft_lite",
-    loop_kwargs: dict = None,
 ) -> np.ndarray:
     """EFT density-split × galaxy cross power spectrum P(k, mu).
 
@@ -185,11 +183,10 @@ def pqg_eft_mu(
     mode : str
         EFT mode:
         - 'tree_only': tree-level only (matches pqg_mu exactly at bq=bq1)
-        - 'eft_lite': tree + partial 1-loop matter + galaxy ct + DS ct
+        - 'eft_lite': tree + galaxy counterterm + DS counterterm (no loop promotion;
+          raw SPT P13 is UV-sensitive and cannot be renormalized by the k² counterterm
+          basis at the current integration range — see _pqg_one_loop_partial)
         - 'eft_full': eft_lite + stochastic terms
-    loop_kwargs : dict, optional
-        Extra kwargs forwarded to compute_one_loop_matter. May contain
-        'p1loop_precomputed' (np.ndarray) to skip expensive integration.
 
     Returns
     -------
@@ -210,14 +207,13 @@ def pqg_eft_mu(
     if mode == "tree_only":
         return _pqg_tree_eft(k, mu, plin, wk, f, ds_params, gal_params, ds_model)
 
-    # eft_lite or eft_full: need one-loop matter
-    lk = loop_kwargs or {}
-    p1loop_pre = lk.pop("p1loop_precomputed", None)
-    if p1loop_pre is not None:
-        p1loop = np.asarray(p1loop_pre, dtype=float)
-    else:
-        loop_result = compute_one_loop_matter(k, lambda kk: get_linear_power(cosmo, kk, z), **lk)
-        p1loop = loop_result["p1loop"]
+    # eft_lite or eft_full: tree + counterterms (no one-loop promotion yet)
+    # NOTE: _pqg_one_loop_partial() exists but is intentionally not called here.
+    # The raw SPT P13 produces |2P13/Plin| ~ 13-15 at k<0.05 (see
+    # test_P13_not_over_normalized), which is not k²-suppressed and cannot be
+    # renormalized by the k²*Plin EFT counterterm basis.  The loop-promotion
+    # step will be re-enabled once a renormalized P13 (delta_p_ren = P22+P13-A*k²*Plin
+    # with A from the k→0 asymptotics) is validated.
 
     # Tree-level (normed at bq1=1 for DS counterterm shape)
     ds_normed = DSSplitBinEFT(label=ds_params.label, bq1=1.0)
@@ -225,8 +221,8 @@ def pqg_eft_mu(
     tree_normed = _pqg_tree_eft(k, mu, plin, wk, f, ds_normed, gal_normed, ds_model)
 
     P = _pqg_tree_eft(k, mu, plin, wk, f, ds_params, gal_params, ds_model)
-    P = P + _pqg_one_loop_partial(k, mu, plin, p1loop, wk, f, ds_params, gal_params, ds_model)
-    P = P + galaxy_counterterm(k, mu, plin, gal_params)
+    ds_amplitude = ds_params.bq1 * wk
+    P = P + galaxy_counterterm(k, mu, plin, gal_params, ds_amplitude)
     P = P + ds_counterterm(k, mu, plin, ds_params, tree_normed, R)
 
     if mode == "eft_full":

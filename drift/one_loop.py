@@ -140,7 +140,8 @@ def compute_P22(
         mu_integral = np.trapz(integrand, mu_arr, axis=1)   # (nq,)
         result[i] = np.trapz(mu_integral, ln_q)
 
-    # Prefactor: 1/(2*pi)^3 * (1/2) * 2 = 1/(4*pi^2) (the 2 from |k-q| symmetry included above)
+    # Prefactor: azimuthal integral of d^3q/(2pi)^3 gives 2pi/(2pi)^3 = 1/(2pi)^2 = 1/(4pi^2).
+    # The leading factor of 2 in the SPT P22 definition is already in the integrand above.
     result *= 1.0 / (4.0 * np.pi**2)
     return result
 
@@ -154,7 +155,10 @@ def compute_P13(
 ) -> np.ndarray:
     """Compute 2*P13(k) via 1D radial integral using analytic F3 angular average.
 
-    2*P13(k) = 6 * P_lin(k) * int_0^inf dq/(2*pi^2) q^2 P_lin(q) * I13(k, q)
+    2*P13(k) = 6 * P_lin(k) * int_0^inf dq/(4*pi^2) q^2 P_lin(q) * I13(k, q)
+
+    Derivation: d^3q/(2pi)^3 = q^2 dq dmu / (4*pi^2) after azimuthal integration.
+    I13(k,q) = int_{-1}^{1} dmu F3^(s)(k,q,-q) is the analytic angular average.
 
     The integration is performed over ln(q) with np.trapz.
     Sign convention: 2*P13 is typically negative at intermediate k.
@@ -187,7 +191,7 @@ def compute_P13(
         # integrand in ln q: q^3 * plin(q) * I13(k,q)
         integrand = q_arr**3 * plin_q * I13
         integral = np.trapz(integrand, ln_q)
-        result[i] = 6.0 * plin_ki * integral / (2.0 * np.pi**2)
+        result[i] = 6.0 * plin_ki * integral / (4.0 * np.pi**2)
 
     return result
 

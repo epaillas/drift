@@ -9,10 +9,14 @@ def galaxy_counterterm(
     mu: np.ndarray,
     plin: np.ndarray,
     gal_params: GalaxyEFTParams,
+    ds_amplitude: np.ndarray,
 ) -> np.ndarray:
-    """Galaxy EFT counterterm.
+    """Galaxy EFT counterterm for DS × galaxy cross-spectrum.
 
-    P_ct^{gal}(k, mu) = -k^2 * P_lin(k) * (c0 + c2*mu^2 + c4*mu^4)
+    P_ct^{gal}(k, mu) = ds_amplitude(k) * [-k^2 * P_lin(k) * (c0 + c2*mu^2 + c4*mu^4)]
+
+    ds_amplitude encodes the DS-side weight bq1 * W_R(k).  For a galaxy
+    auto-spectrum pass ds_amplitude = np.ones_like(k).
 
     Parameters
     ----------
@@ -21,6 +25,8 @@ def galaxy_counterterm(
     plin : array_like, shape (nk,)
         Linear matter power spectrum.
     gal_params : GalaxyEFTParams
+    ds_amplitude : array_like, shape (nk,)
+        DS-side amplitude: bq1 * W_R(k).
 
     Returns
     -------
@@ -29,10 +35,11 @@ def galaxy_counterterm(
     k = np.asarray(k, dtype=float)
     mu = np.asarray(mu, dtype=float)
     plin = np.asarray(plin, dtype=float)
+    ds_amplitude = np.asarray(ds_amplitude, dtype=float)
 
     mu_shape = gal_params.c0 + gal_params.c2 * mu**2 + gal_params.c4 * mu**4  # (nmu,)
     k2_plin = k**2 * plin                                                        # (nk,)
-    return -k2_plin[:, np.newaxis] * mu_shape[np.newaxis, :]
+    return -(ds_amplitude * k2_plin)[:, np.newaxis] * mu_shape[np.newaxis, :]
 
 
 def ds_counterterm(
