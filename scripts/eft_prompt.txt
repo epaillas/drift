@@ -1,0 +1,363 @@
+Please extend the density-split theory repository toward a genuine EFT-of-LSS style implementation for density-split–galaxy redshift-space power spectrum multipoles.
+
+The code should remain readable and scientifically explicit.
+
+==================================================
+0. High-level scientific goal
+==================================================
+
+We want to model the redshift-space density-split–galaxy cross-power spectrum multipoles
+
+    P_qg^s(k, mu)
+
+in a framework that is meaningfully closer to EFT of LSS / one-loop biased-tracer perturbation theory.
+
+The density-split field q_i is defined as a selection field built from a smoothed density field. The implementation should therefore treat the density-split field as a biased composite operator rather than as an ordinary tracer only.
+
+The code must support:
+- tree level
+- one-loop contributions
+- EFT counterterms
+- stochastic terms
+- multiple DS-side model choices
+- numerical projection to multipoles ell = 0, 2, 4
+
+
+==================================================
+1. Scientific scope and philosophy
+==================================================
+
+- a transparent implementation of the theory structure
+- clean separation between linear inputs, loop integrals, EFT terms, and observable assembly
+
+The implementation should be honest:
+- if some full one-loop biased-tracer redshift-space terms are not completed, leave them behind explicit TODOs or NotImplementedError interfaces
+- but structure the repository so that the missing pieces can be added cleanly
+
+==================================================
+2. Target observable and model hierarchy
+==================================================
+
+Primary target:
+- density-split–galaxy redshift-space cross-spectrum multipoles
+
+We want
+
+    P_qg^s(k, mu)
+    P_{q_i g, ell}(k)
+
+for ell = 0, 2, 4.
+
+Retain the DS-side hierarchy from the minimal code, but reinterpret it in EFT language:
+
+A. baseline:
+    density-split field treated as a real-space selection tracer with EFT bias expansion
+
+B. rsd_selection:
+    density-split field defined from a redshift-space smoothed density and therefore carrying explicit anisotropic response
+
+C. phenomenological:
+    flexible anisotropic DS-side extension for testing against data
+
+These should all remain supported, but the theory implementation should now include:
+- one-loop matter spectrum ingredients
+- one-loop biased-tracer structure where feasible
+- EFT counterterms
+- stochastic terms
+
+==================================================
+3. Theory formulation to implement
+==================================================
+
+Please organize the implementation around the following decomposition:
+
+    P_qg^s(k, mu) =
+        P_qg^{tree}(k, mu)
+      + P_qg^{1loop}(k, mu)
+      + P_qg^{ct}(k, mu)
+      + P_qg^{stoch}(k, mu)
+
+where
+
+- tree   = leading-order density-split × galaxy model
+- 1loop  = one-loop mode-coupling contributions
+- ct     = EFT counterterms
+- stoch  = stochastic contributions
+
+The final multipoles should be obtained by numerical projection over mu.
+
+==================================================
+4. Density-split EFT interpretation
+==================================================
+
+Please treat the density-split field q_i as a biased composite operator built from a smoothed density field.
+
+At the level of the implementation scaffold, encode the density-split field bias expansion schematically as
+
+    delta_q_i ~
+        bq1 * [delta_R]
+      + bq2 * [delta_R^2]
+      + bqK2 * [K_R^2]
+      + bq_nabla2 * R^2 nabla^2 delta_R
+      + ...
+
+You do NOT need to implement every renormalization subtlety immediately, but the repository structure should reflect this interpretation.
+
+At minimum:
+- include linear DS bias bq1
+- include quadratic DS operators in the parameter structure and model interfaces
+- include higher-derivative DS counterterm coefficient(s)
+- keep the smoothing kernel W_R(k) explicit
+
+If a fully consistent one-loop DS composite-operator implementation is too much for one pass, then:
+- implement the full interfaces and parameter plumbing
+- implement the most important operational subset
+- document exactly what is approximated and what remains TODO
+
+==================================================
+5. Galaxy-side biased tracer EFT structure
+==================================================
+
+On the galaxy side, support a standard one-loop biased-tracer style parameter set:
+
+Required parameter interface:
+- b1
+- b2
+- bs2
+- b3nl   (or equivalent cubic bias combination if that is the chosen convention)
+
+Required EFT nuisance terms:
+- c0 / c2 or equivalent redshift-space counterterm coefficients
+- at least one isotropic and one anisotropic k^2-style counterterm structure if feasible
+
+You may choose a consistent convention, but document it clearly.
+
+If you prefer a slightly reduced first pass, that is acceptable, but the parameter container and model assembly should already anticipate the full set.
+
+==================================================
+6. One-loop matter spectrum
+==================================================
+
+Implement a proper one-loop matter spectrum backend:
+
+    P_mm^{1loop}(k) = P_lin(k) + P22(k) + P13(k)
+
+Requirements:
+- isolate this in its own module
+- keep kernels and integrals explicit
+- use scipy numerical integration or another transparent numerical method
+- add tests for finiteness and large-scale behavior
+
+If possible, also prepare helper functions for IR-safe integration / numerical stabilization, even if only partial.
+
+==================================================
+7. One-loop cross-spectrum structure
+==================================================
+
+Implement the one-loop structure for the density-split–galaxy cross-spectrum as far as is reasonable.
+
+At minimum, organize the code so that the one-loop term can be decomposed schematically into contributions like
+
+    < [delta_R] , galaxy one-loop tracer >
+    < [delta_R^2] , galaxy linear >
+    < [K_R^2] , galaxy linear >
+    ...
+
+or an equivalent basis.
+
+The exact implementation can be pragmatic, but the structure should clearly separate:
+- DS linear operator contributions
+- DS quadratic operator contributions
+- galaxy bias operator contributions
+- smoothing-kernel insertions
+- redshift-space angular dependence
+
+If a complete derivation is too large to finish in one pass, implement:
+- the matter one-loop backend fully
+- the tree-level DS-galaxy RSD model fully
+- a partial one-loop DS-galaxy implementation with explicit placeholders for missing operator contractions
+
+
+==================================================
+8. Redshift-space treatment
+==================================================
+
+Support redshift space explicitly.
+
+At minimum, the implementation should allow:
+- tree-level Kaiser structure
+- one-loop redshift-space angular dependence scaffold
+- EFT counterterms that depend on mu^2, mu^4, etc.
+
+A reasonable practical decomposition is
+
+    P_qg^s(k, mu) =
+        sum_n mu^{2n} * P_qg^{(2n)}(k)
+
+with numerical assembly of the mu dependence.
+
+Please build the code so that different mu-polynomial contributions are tracked cleanly.
+
+
+==================================================
+9. EFT counterterms
+==================================================
+
+Implement a dedicated counterterm module.
+
+At minimum support:
+- DS-side higher-derivative term(s), e.g. proportional to k^2 W_R(k)
+- galaxy-side redshift-space EFT counterterms
+- optional cross counterterms if needed by the chosen decomposition
+
+A practical first implementation could use a basis such as
+
+    P_ct(k, mu) =
+        - 2 pi c_s^2 k^2 P_lin(k)    [for matter-like pieces]
+    plus tracer-specific terms like
+        k^2 P_lin(k) * (a0 + a2 mu^2 + a4 mu^4)
+
+For the DS-galaxy case, define a clear counterterm basis and document it.
+
+The point is not to enforce one unique EFT convention, but to provide a transparent and extensible basis.
+
+==================================================
+10. Stochastic terms
+==================================================
+
+Implement a stochastic-term module and parameter plumbing.
+
+For the DS-galaxy cross spectrum, default stochasticity may be zero at leading order, but the code should support optional terms such as
+
+    P_stoch(k, mu) = s0 + s2 k^2 + ...
+or other simple nuisance expansions if desired.
+
+This should be configurable and easy to switch off.
+
+==================================================
+11. Parameter containers
+==================================================
+
+Please redesign parameter containers so they reflect the EFT structure.
+
+A. Density-split bin parameters:
+- label
+- bq1
+- bq2
+- bqK2
+- bq_nabla2
+- beta_q        (for phenomenological anisotropy, optional)
+- optional stochastic coefficients if desired
+
+B. Galaxy EFT parameters:
+- b1
+- b2
+- bs2
+- b3nl
+- counterterm coefficients (for chosen basis)
+- optional stochastic coefficients
+
+C. Global model parameters:
+- redshift z
+- smoothing scale R
+- kernel choice
+- ds_model choice
+- matter_model choice
+- EFT mode switch
+- k range / numerical integration settings
+
+==================================================
+12. Configuration and modes
+==================================================
+
+Support at least these modes:
+
+A. tree_only
+- existing minimal tree-level model
+
+B. eft_lite
+- tree + one-loop matter + simple counterterms
+
+C. eft_full
+- tree + one-loop pieces + counterterms + stochastic plumbing + richer bias structure
+
+It is acceptable if eft_full initially contains some partially implemented components, as long as:
+- interfaces are there
+- implemented pieces work
+- missing pieces are explicit
+
+==================================================
+13. Numerical strategy
+==================================================
+
+Please be careful about numerical stability.
+
+Requirements:
+- use log-spaced k grids where appropriate
+- avoid obvious singularities in loop integrals
+- document integration cutoffs and choices
+- add reasonable defaults for kmin / kmax / q integration ranges
+- keep performance acceptable but prioritize correctness / clarity
+
+If some loop integrals are expensive, structure the code so they can be cached later.
+
+==================================================
+14. Multipoles
+==================================================
+
+Continue to use numerical projection as the source of truth.
+
+Support:
+- ell = 0
+- ell = 2
+- ell = 4
+
+Please ensure the full model can be projected robustly, including:
+- one-loop pieces
+- counterterms
+- stochastic terms
+
+==================================================
+15. Tests
+==================================================
+
+Add serious tests.
+
+At minimum:
+
+A. matter one-loop tests
+- P22 finite
+- P13 finite
+- P_1loop finite over representative k range
+- P_1loop approaches P_lin at low k
+
+B. tree/EFT consistency tests
+- eft_lite reduces to tree when loop and ct coefficients are zero
+- turning off DS quadratic biases removes corresponding contributions
+- turning off galaxy nonlinear biases removes corresponding contributions
+
+C. multipole tests
+- projected multipoles are finite
+- baseline tree model reproduces known analytic tree-level behavior
+- rsd_selection generates nonzero P4
+
+D. counterterm tests
+- counterterm pieces vanish when coefficients are zero
+- k^2 scaling behaves sensibly
+
+E. configuration tests
+- model selection and backend selection work
+- unsupported modes fail clearly
+
+==================================================
+16. Important scientific guardrails
+==================================================
+
+Please do not oversell the theory.
+
+If some contributions are only partially implemented, state that clearly in code comments and README.
+
+The ideal outcome is:
+- a correct and modular scaffold for a real EFT implementation
+- with some substantial working components
+- and honest placeholders where the remaining research work is nontrivial

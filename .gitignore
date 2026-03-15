@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Testing
+.pytest_cache/
+.coverage
+
+# Editor / OS
+.DS_Store
+*.swp
+
+# Outputs (large generated files — not tracked)
+outputs/
+
+# Local Claude settings
+.claude/
