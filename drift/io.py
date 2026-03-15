@@ -85,6 +85,81 @@ def load_measurements(path, nquantiles=5, ells=(0, 2, 4), rebin=5) -> tuple:
     return k, multipoles_per_bin
 
 
+def load_covariance_mocks(directory, nquantiles=5, quantiles=None, ells=(0, 2), rebin=5):
+    """Load all mock realizations from a directory for covariance estimation.
+
+    Parameters
+    ----------
+    directory : str or Path
+    nquantiles : int
+        Total number of quantiles in each file (used for loading).
+    quantiles : sequence of int, optional
+        Which quantile indices (1-based) to include in the output data vector.
+        Defaults to range(1, nquantiles + 1) — all quantiles.
+    ells : tuple of int
+    rebin : int
+
+    Returns
+    -------
+    k : np.ndarray  shape (nk,)
+    mock_matrix : np.ndarray  shape (n_mocks, len(quantiles) * n_ells * nk)
+        Row order matches the flat data vector built by inference scripts:
+        for q in quantiles, for ell in ells, k-values.
+    """
+    if quantiles is None:
+        quantiles = range(1, nquantiles + 1)
+    paths = sorted(Path(directory).glob("*.h5"))
+    rows = []
+    k = None
+    for p in paths:
+        k_i, meas = load_measurements(p, nquantiles=nquantiles, ells=ells, rebin=rebin)
+        if k is None:
+            k = k_i
+        row = np.concatenate([
+            meas[f"DS{q}"][ell]
+            for q in quantiles
+            for ell in ells
+        ])
+        rows.append(row)
+    return k, np.array(rows)
+
+
+def make_mock_covariance(mock_matrix, mask=None, rescale=1.0):
+    """Compute the sample covariance matrix from mock realizations.
+
+    Applies the Hartlap (2007) correction to the precision matrix when
+    n_mocks > n_data + 2.  Raises ValueError if n_mocks <= n_data (singular).
+
+    Parameters
+    ----------
+    mock_matrix : np.ndarray  shape (n_mocks, n_data_full)
+    mask : np.ndarray of bool, optional
+        If provided, selects a subset of the data vector before computing
+        the covariance (must be applied consistently with inference).
+    rescale : float, optional
+        Divide the covariance by this factor before inverting (default: 1.0).
+        Equivalent to multiplying the precision matrix by rescale.
+
+    Returns
+    -------
+    cov : np.ndarray  shape (n_data, n_data)
+    precision : np.ndarray  shape (n_data, n_data)
+        Hartlap-corrected inverse covariance.
+    """
+    vecs = mock_matrix[:, mask] if mask is not None else mock_matrix
+    n_mocks, n_data = vecs.shape
+    if n_mocks <= n_data:
+        raise ValueError(
+            f"Covariance matrix is singular: n_mocks={n_mocks} <= n_data={n_data}. "
+            "Apply a kmax cut to reduce n_data below n_mocks."
+        )
+    cov = np.cov(vecs.T) / rescale                  # (n_data, n_data)
+    precision = np.linalg.inv(cov)
+    hartlap = (n_mocks - n_data - 2) / (n_mocks - 1)
+    precision *= hartlap
+    return cov, precision
+
+
 def save_text(path, k: np.ndarray, multipoles_per_bin: dict) -> None:
     """Save predictions to a human-readable text file.
 
