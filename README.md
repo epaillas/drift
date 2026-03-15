@@ -1,6 +1,8 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/drift_logo_dark_mode.png" width="200">
+  <div align="center">
   <img src="docs/drift_logo_light_mode.png" width="200" alt="DRIFT logo">
+  </div>
 </picture>
 
 # DRIFT — Density-split Renormalized Inference and Field Theory
