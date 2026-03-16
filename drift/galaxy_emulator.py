@@ -10,8 +10,8 @@ import numpy as np
 
 from .cosmology import get_linear_power, get_growth_rate
 
-_VALID_MODES = ("tree_only", "eft_lite", "eft_full")
-_EMULATOR_UNSUPPORTED_MODES = ("one_loop",)
+_VALID_MODES = ("tree_only", "eft_lite", "eft_full", "one_loop")
+_EMULATOR_UNSUPPORTED_MODES = ()
 
 # Analytic Legendre moments (same as emulator.py)
 #   _M[ell][n] = (2*ell+1)/2 * int_{-1}^{1} L_ell(mu) * mu^n dmu
@@ -52,11 +52,6 @@ class GalaxyTemplateEmulator:
         space="redshift",
         mode="eft_lite",
     ):
-        if mode in _EMULATOR_UNSUPPORTED_MODES:
-            raise ValueError(
-                f"Mode '{mode}' requires numerical loop integration and is not "
-                "supported by GalaxyTemplateEmulator. Use --no-emulator."
-            )
         if mode not in _VALID_MODES:
             raise ValueError(f"Unknown mode '{mode}'. Choose one of {_VALID_MODES}.")
         for ell in ells:
@@ -87,11 +82,28 @@ class GalaxyTemplateEmulator:
         self._T_k2Plin = k ** 2 * plin  # k^2 * P_lin
         self._T_k2 = k ** 2             # k^2 (stochastic shape)
 
+        if self.mode == "one_loop":
+            from .galaxy_models import _compute_loop_templates
+            def plin_func(kk):
+                return get_linear_power(cosmo, np.asarray(kk, dtype=float), self.z)
+            loops = _compute_loop_templates(k, plin_func)
+            self._T_p22 = loops["p22"]
+            self._T_p13 = loops["p13"]
+            self._T_I12 = loops["I12"]
+            self._T_J12 = loops["J12"]
+            self._T_I22 = loops["I22"]
+            self._T_I2K = loops["I2K"]
+            self._T_J22 = loops["J22"]
+            self._T_p22_dt = loops["p22_dt"]
+            self._T_p22_tt = loops["p22_tt"]
+            self._T_p13_dt = loops["p13_dt"]
+            self._T_p13_tt = loops["p13_tt"]
+
     # ------------------------------------------------------------------
     # Cosmology update
     # ------------------------------------------------------------------
 
-    def update_cosmology(self, plin: np.ndarray, f: float) -> None:
+    def update_cosmology(self, plin: np.ndarray, f: float, loop_arrays=None) -> None:
         """Recompute templates for a new (plin, f) without reinitialising.
 
         ~0.01 ms per call. Intended for use in cosmology-varying MCMC loops.
@@ -100,17 +112,33 @@ class GalaxyTemplateEmulator:
         ----------
         plin : np.ndarray, shape (nk,)
         f : float
+        loop_arrays : dict, optional
+            Required when mode='one_loop'. Keys: 'p22', 'p13', 'I12', 'J12',
+            'I22', 'I2K', 'J22', 'p22_dt', 'p22_tt', 'p13_dt', 'p13_tt',
+            each shape (nk,).
         """
         plin = np.asarray(plin, dtype=float)
         self._T_Plin = plin
         self._T_k2Plin = self.k ** 2 * plin
         self.f = float(f)
+        if self.mode == "one_loop" and loop_arrays is not None:
+            self._T_p22 = loop_arrays["p22"]
+            self._T_p13 = loop_arrays["p13"]
+            self._T_I12 = loop_arrays["I12"]
+            self._T_J12 = loop_arrays["J12"]
+            self._T_I22 = loop_arrays["I22"]
+            self._T_I2K = loop_arrays["I2K"]
+            self._T_J22 = loop_arrays["J22"]
+            self._T_p22_dt = loop_arrays["p22_dt"]
+            self._T_p22_tt = loop_arrays["p22_tt"]
+            self._T_p13_dt = loop_arrays["p13_dt"]
+            self._T_p13_tt = loop_arrays["p13_tt"]
 
     # ------------------------------------------------------------------
     # Core analytic projection
     # ------------------------------------------------------------------
 
-    def _pole(self, b1, c0, c2, c4, s0, s2, ell):
+    def _pole(self, b1, c0, c2, c4, s0, s2, ell, b2=0.0, bs2=0.0):
         """Analytic Legendre multipole P_ell(k) for the galaxy auto-spectrum.
 
         Parameters
@@ -156,8 +184,25 @@ class GalaxyTemplateEmulator:
             cm4 = cm4 - 2.0 * (b1 * c4 + f * c2) * k2A
             cm6 = cm6 - 2.0 * f * c4 * k2A
 
-        # ---- Stochastic terms (eft_full only) ----
-        if self.mode == "eft_full":
+        # ---- One-loop corrections (one_loop mode) ----
+        if self.mode == "one_loop":
+            p_loop_dd = b1 ** 2 * (self._T_p22 + self._T_p13)
+            p_loop_bias = (
+                2.0 * b1 * b2   * self._T_I12
+                + 2.0 * b1 * bs2  * self._T_J12
+                + b2 ** 2          * self._T_I22
+                + 2.0 * b2 * bs2  * self._T_I2K
+                + bs2 ** 2         * self._T_J22
+            )
+            cm0 = cm0 + p_loop_dd + p_loop_bias
+            # Velocity loop contributions: density×velocity (mu^2) and velocity auto (mu^4)
+            P_dt_loop = self._T_p22_dt + self._T_p13_dt
+            P_tt_loop = self._T_p22_tt + self._T_p13_tt
+            cm2 = cm2 + 2.0 * b1 * f * P_dt_loop
+            cm4 = cm4 + f ** 2 * P_tt_loop
+
+        # ---- Stochastic terms (eft_full and one_loop) ----
+        if self.mode in ("eft_full", "one_loop"):
             cm0 = cm0 + s0 + s2 * k2
 
         return M0 * cm0 + M2 * cm2 + M4 * cm4 + M6 * cm6
@@ -184,14 +229,16 @@ class GalaxyTemplateEmulator:
         np.ndarray, shape (n_ells * nk,)
             Flat data vector ordered as ``[ell0_k0..kN, ell2_k0..kN, ...]``.
         """
-        b1 = float(params["b1"])
-        c0 = float(params.get("c0", 0.0))
-        c2 = float(params.get("c2", 0.0))
-        c4 = float(params.get("c4", 0.0))
-        s0 = float(params.get("s0", 0.0))
-        s2 = float(params.get("s2", 0.0))
+        b1  = float(params["b1"])
+        c0  = float(params.get("c0", 0.0))
+        c2  = float(params.get("c2", 0.0))
+        c4  = float(params.get("c4", 0.0))
+        s0  = float(params.get("s0", 0.0))
+        s2  = float(params.get("s2", 0.0))
+        b2  = float(params.get("b2", 0.0))
+        bs2 = float(params.get("bs2", 0.0))
 
         pieces = []
         for ell in self.ells:
-            pieces.append(self._pole(b1, c0, c2, c4, s0, s2, ell))
+            pieces.append(self._pole(b1, c0, c2, c4, s0, s2, ell, b2=b2, bs2=bs2))
         return np.concatenate(pieces)

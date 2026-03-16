@@ -4,23 +4,24 @@ import numpy as np
 
 from .cosmology import get_linear_power, get_growth_rate
 from .eft_bias import GalaxyEFTParams
-from .one_loop import compute_P22, compute_P13, compute_bias_loops
+from .one_loop import compute_P22, compute_P13, compute_bias_loops, compute_Pdt_Ptt
 
 _VALID_MODES = ("tree_only", "eft_lite", "eft_full", "one_loop")
 
 
 def _compute_loop_templates(k, plin_func):
-    """Compute all 7 one-loop arrays needed for the one_loop mode.
+    """Compute all one-loop arrays needed for the one_loop mode.
 
     Returns
     -------
     dict with keys 'p22', 'p13', 'I12', 'J12', 'I22', 'I2K', 'J22',
-    each shape (nk,).
+    'p22_dt', 'p22_tt', 'p13_dt', 'p13_tt', each shape (nk,).
     """
     p22 = compute_P22(k, plin_func)
     p13 = compute_P13(k, plin_func)
     bias = compute_bias_loops(k, plin_func)
-    return {"p22": p22, "p13": p13, **bias}
+    vel = compute_Pdt_Ptt(k, plin_func, p13_dd=p13)
+    return {"p22": p22, "p13": p13, **bias, **vel}
 
 
 def pgg_mu(k, mu, z, cosmo, b1, space="redshift"):
@@ -146,6 +147,8 @@ def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_lite"):
 
         loops = _compute_loop_templates(k, plin_func)
         p22, p13 = loops["p22"], loops["p13"]
+        p22_dt, p22_tt = loops["p22_dt"], loops["p22_tt"]
+        p13_dt, p13_tt = loops["p13_dt"], loops["p13_tt"]
 
         p_loop_bias = (
             2.0 * b1 * b2   * loops["I12"]
@@ -155,9 +158,16 @@ def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_lite"):
             + bs2 ** 2       * loops["J22"]
         )  # (nk,)
 
-        # Add isotropic loop corrections to tree-level Kaiser
-        P_loop_matter = b1 ** 2 * (p22 + p13)  # (nk,)
-        P = P + P_loop_matter[:, np.newaxis] + p_loop_bias[:, np.newaxis]
+        # Density auto loop (isotropic, mu^0)
+        P_dd_loop = b1 ** 2 * (p22 + p13)          # (nk,)
+        # Density × velocity loop (∝ mu^2)
+        P_dt_loop = p22_dt + p13_dt                 # (nk,)
+        # Velocity auto loop (∝ mu^4)
+        P_tt_loop = p22_tt + p13_tt                 # (nk,)
+
+        P = P + P_dd_loop[:, np.newaxis] + p_loop_bias[:, np.newaxis]
+        P = P + (2.0 * b1 * f) * mu[np.newaxis, :] ** 2 * P_dt_loop[:, np.newaxis]
+        P = P + f ** 2 * mu[np.newaxis, :] ** 4 * P_tt_loop[:, np.newaxis]
 
         # EFT counterterm
         c0 = gal_params.c0
