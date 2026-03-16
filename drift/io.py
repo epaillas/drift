@@ -85,6 +85,67 @@ def load_measurements(path, nquantiles=5, ells=(0, 2, 4), rebin=5) -> tuple:
     return k, multipoles_per_bin
 
 
+def load_pgg_measurements(path, ells=(0, 2), rebin=13, kmin=0.0, kmax=np.inf) -> tuple:
+    """Load galaxy auto-power spectrum multipoles from a jaxpower HDF5 file.
+
+    Parameters
+    ----------
+    path : str or Path
+    ells : tuple of int, default (0, 2)
+    rebin : int, default 13
+    kmin : float, default 0.0
+    kmax : float, default np.inf
+
+    Returns
+    -------
+    k : np.ndarray
+    poles : dict  —  {ell: array}
+    """
+    from jaxpower import read
+
+    data = read(str(path)).select(k=slice(0, None, rebin))
+    if kmin > 0.0 or kmax < np.inf:
+        data = data.select(k=(kmin, kmax))
+
+    k = None
+    poles = {}
+    for ell in ells:
+        leaf = data.get(ell)
+        if k is None:
+            k = np.array(leaf.coords('k'))
+        poles[ell] = np.array(leaf.value())
+    return k, poles
+
+
+def load_pgg_covariance_mocks(directory, ells=(0, 2), rebin=13, kmin=0.0, kmax=np.inf):
+    """Load all P_gg mock realizations from a directory for covariance estimation.
+
+    Parameters
+    ----------
+    directory : str or Path
+    ells : tuple of int
+    rebin : int
+    kmin : float
+    kmax : float
+
+    Returns
+    -------
+    k : np.ndarray  shape (nk,)
+    mock_matrix : np.ndarray  shape (n_mocks, n_ells * nk)
+        Row order: for ell in ells, k-values.
+    """
+    paths = sorted(Path(directory).glob("mesh2_spectrum_poles_ph*.h5"))
+    rows = []
+    k = None
+    for p in paths:
+        k_i, poles = load_pgg_measurements(p, ells=ells, rebin=rebin, kmin=kmin, kmax=kmax)
+        if k is None:
+            k = k_i
+        row = np.concatenate([poles[ell] for ell in ells])
+        rows.append(row)
+    return k, np.array(rows)
+
+
 def load_covariance_mocks(directory, nquantiles=5, quantiles=None, ells=(0, 2), rebin=5):
     """Load all mock realizations from a directory for covariance estimation.
 
