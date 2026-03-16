@@ -6,6 +6,8 @@ from .eft_bias import DSSplitBinEFT, GalaxyEFTParams
 from .eft_models import pqg_eft_mu
 from .one_loop import compute_one_loop_matter, compute_P22, compute_P13
 from .eft_config import EFTConfig, load_eft_config
+from .galaxy_models import pgg_mu, pgg_eft_mu
+from .galaxy_emulator import GalaxyTemplateEmulator
 
 __all__ = [
     "DSSplitBin",
@@ -26,4 +28,7 @@ __all__ = [
     "compute_P13",
     "EFTConfig",
     "load_eft_config",
+    "pgg_mu",
+    "pgg_eft_mu",
+    "GalaxyTemplateEmulator",
 ]

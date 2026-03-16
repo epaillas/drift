@@ -7,7 +7,7 @@ from drift.cosmology import get_cosmology, get_linear_power, get_growth_rate
 from drift.bias import DSSplitBin
 from drift.models import pqg_mu
 from drift.eft_bias import DSSplitBinEFT, GalaxyEFTParams
-from drift.eft_models import pqg_eft_mu
+from drift.eft_models import pqg_eft_mu, _pqg_ds_lin
 from drift.eft_terms import galaxy_counterterm, ds_counterterm, stochastic_term
 from drift.multipoles import compute_multipoles
 
@@ -76,47 +76,74 @@ def test_eft_lite_zero_corrections_is_tree(cosmo, k, mu, ds_eft, gal):
 
 def test_galaxy_counterterm_vanishes_when_c_zero(k, mu, plin):
     gal_zero = GalaxyEFTParams(b1=1.5, c0=0.0, c2=0.0, c4=0.0)
-    ct = galaxy_counterterm(k, mu, plin, gal_zero, np.ones_like(k))
+    ds_lin = plin[:, np.newaxis] * np.ones((1, len(mu)))
+    ct = galaxy_counterterm(k, mu, gal_zero, ds_lin)
     np.testing.assert_allclose(ct, 0.0, atol=1e-30)
 
 
 def test_galaxy_counterterm_k2_scaling(k, mu, plin):
-    """With c0 only, ct = -c0 * k^2 * P_lin (independent of mu)."""
+    """With c0 only and ds_lin=P_lin, ct = -c0 * k^2 * P_lin (independent of mu)."""
     c0 = 2.5
     gal = GalaxyEFTParams(b1=1.0, c0=c0)
-    ct = galaxy_counterterm(k, mu, plin, gal, np.ones_like(k))
-    expected = -c0 * (k**2 * plin)[:, np.newaxis] * np.ones((1, len(mu)))
+    ds_lin = plin[:, np.newaxis] * np.ones((1, len(mu)))
+    ct = galaxy_counterterm(k, mu, gal, ds_lin)
+    expected = -c0 * (k**2)[:, np.newaxis] * ds_lin
     np.testing.assert_allclose(ct, expected, rtol=1e-12)
 
 
 def test_galaxy_ct_scales_with_ds_amplitude(k, mu, plin):
-    """Doubling ds_amplitude should double the galaxy counterterm."""
+    """Doubling ds_lin should double the galaxy counterterm."""
     gal = GalaxyEFTParams(b1=1.0, c0=2.0)
-    amp = np.ones_like(k) * 0.7
-    ct1 = galaxy_counterterm(k, mu, plin, gal, amp)
-    ct2 = galaxy_counterterm(k, mu, plin, gal, 2.0 * amp)
+    ds_lin = (plin * 0.7)[:, np.newaxis] * np.ones((1, len(mu)))
+    ct1 = galaxy_counterterm(k, mu, gal, ds_lin)
+    ct2 = galaxy_counterterm(k, mu, gal, 2.0 * ds_lin)
     np.testing.assert_allclose(ct2, 2.0 * ct1, rtol=1e-12)
 
 
 def test_galaxy_ct_opposite_sign_for_ds1_and_ds5(cosmo, k, mu, gal, plin):
-    """DS1 (bq1 < 0) and DS5 (bq1 > 0) receive opposite-sign galaxy counterterms.
+    """DS1 (bq1 < 0) and DS5 (bq1 > 0) receive opposite-sign galaxy counterterms."""
+    from drift.kernels import gaussian_kernel
+    from drift.cosmology import get_growth_rate
+    R = 10.0
+    wk = gaussian_kernel(k, R)
+    f = get_growth_rate(cosmo, 0.5)
+    c0 = 2.0
+    gal_ct = GalaxyEFTParams(b1=gal.b1, c0=c0)
 
-    With the corrected ds_amplitude = bq1 * wk, the signs of the galaxy CT
-    contribution flip between positive and negative quintiles.  The old bug
-    (missing bq1) gave the same sign for all quintiles.
+    ds1 = DSSplitBinEFT(label="DS1", bq1=-1.5)
+    ds5 = DSSplitBinEFT(label="DS5", bq1=1.5)
+    ds_lin_ds1 = _pqg_ds_lin(k, mu, plin, wk, f, ds1, "baseline")
+    ds_lin_ds5 = _pqg_ds_lin(k, mu, plin, wk, f, ds5, "baseline")
+    ct_ds1 = galaxy_counterterm(k, mu, gal_ct, ds_lin_ds1)
+    ct_ds5 = galaxy_counterterm(k, mu, gal_ct, ds_lin_ds5)
+
+    # ct_ds5 / ct_ds1 should equal bq1_ds5 / bq1_ds1 = -1 everywhere
+    np.testing.assert_allclose(ct_ds5, -1.0 * ct_ds1, rtol=1e-12)
+
+
+def test_galaxy_ct_inherits_ds_angular_structure_rsd_selection(cosmo, k, mu, plin):
+    """For rsd_selection, the galaxy CT should carry the DS (1+f*mu^2) angular factor.
+
+    ds_lin for rsd_selection = bq1 * plin * wk * (1 + f*mu^2), so the galaxy CT
+    must differ from baseline by the factor (1 + f*mu^2) at each (k, mu).
     """
     from drift.kernels import gaussian_kernel
     R = 10.0
     wk = gaussian_kernel(k, R)
-    c0 = 2.0
-    gal_ct = GalaxyEFTParams(b1=gal.b1, c0=c0)
+    f = get_growth_rate(cosmo, 0.5)
+    bq1 = 0.8
+    ds = DSSplitBinEFT(label="DS3", bq1=bq1)
+    gal_ct = GalaxyEFTParams(b1=1.5, c0=2.0)
 
-    bq1_ds1, bq1_ds5 = -1.5, 1.5
-    ct_ds1 = galaxy_counterterm(k, mu, plin, gal_ct, bq1_ds1 * wk)
-    ct_ds5 = galaxy_counterterm(k, mu, plin, gal_ct, bq1_ds5 * wk)
+    ds_lin_base = _pqg_ds_lin(k, mu, plin, wk, f, ds, "baseline")
+    ds_lin_rsd = _pqg_ds_lin(k, mu, plin, wk, f, ds, "rsd_selection")
 
-    # ct_ds5 / ct_ds1 should equal bq1_ds5 / bq1_ds1 = -1 everywhere
-    np.testing.assert_allclose(ct_ds5, -1.0 * ct_ds1, rtol=1e-12)
+    ct_base = galaxy_counterterm(k, mu, gal_ct, ds_lin_base)
+    ct_rsd = galaxy_counterterm(k, mu, gal_ct, ds_lin_rsd)
+
+    # ct_rsd / ct_base should equal (1 + f*mu^2) at each (k, mu)
+    angular_factor = (1.0 + f * mu**2)[np.newaxis, :]
+    np.testing.assert_allclose(ct_rsd, ct_base * angular_factor, rtol=1e-12)
 
 
 def test_galaxy_ct_perturbative_at_low_k(cosmo, k, mu, ds_eft, gal, plin):
@@ -130,13 +157,12 @@ def test_galaxy_ct_perturbative_at_low_k(cosmo, k, mu, ds_eft, gal, plin):
     wk = gaussian_kernel(k, R)
 
     gal_ct = GalaxyEFTParams(b1=gal.b1, c0=5.0)   # deliberately large c0
-    ds_amplitude = ds_eft.bq1 * wk
-    ct = galaxy_counterterm(k, mu, plin, gal_ct, ds_amplitude)
+    from drift.eft_models import _pqg_tree_eft
+    f = get_growth_rate(cosmo, 0.5)
+    ds_lin = _pqg_ds_lin(k, mu, plin, wk, f, ds_eft, "baseline")
+    ct = galaxy_counterterm(k, mu, gal_ct, ds_lin)
 
     # Tree-level for the same ds_params
-    from drift.eft_models import _pqg_tree_eft
-    from drift.cosmology import get_growth_rate
-    f = get_growth_rate(cosmo, 0.5)
     tree = _pqg_tree_eft(k, mu, plin, wk, f, ds_eft, gal, "baseline")
 
     k_low_mask = k < 0.05

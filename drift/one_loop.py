@@ -196,6 +196,128 @@ def compute_P13(
     return result
 
 
+def G2_kernel(cos_theta: float) -> float:
+    """Tidal bias kernel (traceless tidal tensor).
+
+    Parameters
+    ----------
+    cos_theta : float
+        Cosine of the angle between the two wavevectors.
+
+    Returns
+    -------
+    float
+    """
+    return cos_theta ** 2 - 1.0 / 3.0
+
+
+def compute_bias_loops(
+    k,
+    plin_func,
+    q_min: float = 1e-4,
+    q_max: float = 10.0,
+    n_q: int = 128,
+    n_mu: int = 128,
+) -> dict:
+    """Compute the 5 one-loop bias integrals in a single 2D pass.
+
+    All integrals have the form::
+
+        X(k) = int d^3q/(2pi)^3  K(q, k-q)  P_lin(q) P_lin(|k-q|)
+
+    using the same (q, mu_q) grid as ``compute_P22``.
+
+    Integrals returned
+    ------------------
+    I12 : kernel = F2(q, k-q, cos12)          [b1 × b2 cross]
+    J12 : kernel = G2(cos12)                  [b1 × bs2 cross]
+    I22 : kernel = 1/2                        [b2^2 auto, trivial]
+    I2K : kernel = G2(cos12) / 2              [b2 × bs2 cross]
+    J22 : kernel = G2(cos12)^2 / 2            [bs2^2 auto]
+
+    Parameters
+    ----------
+    k : array_like, shape (nk,)
+        Output wavenumbers in h/Mpc.
+    plin_func : callable
+        plin_func(k_arr) -> P_lin array, shape (nk,).
+    q_min, q_max : float
+        Integration limits in h/Mpc.
+    n_q : int
+        Number of log-spaced q points.
+    n_mu : int
+        Number of linear mu_q points in [-1, 1].
+
+    Returns
+    -------
+    dict with keys 'I12', 'J12', 'I22', 'I2K', 'J22', each shape (nk,).
+    """
+    k = np.asarray(k, dtype=float)
+    q_arr = np.geomspace(q_min, q_max, n_q)      # (nq,)
+    mu_arr = np.linspace(-1.0, 1.0, n_mu)         # (nmu,)
+    ln_q = np.log(q_arr)
+
+    plin_q = plin_func(q_arr)                      # (nq,)
+
+    I12 = np.zeros(len(k))
+    J12 = np.zeros(len(k))
+    I22 = np.zeros(len(k))
+    I2K = np.zeros(len(k))
+    J22 = np.zeros(len(k))
+
+    for i, ki in enumerate(k):
+        q2d = q_arr[:, np.newaxis]          # (nq, 1)
+        mu2d = mu_arr[np.newaxis, :]        # (1, nmu)
+
+        k2_sq = ki ** 2 + q2d ** 2 - 2.0 * ki * q2d * mu2d  # (nq, nmu)
+        k2_sq = np.maximum(k2_sq, 0.0)
+        k2 = np.sqrt(k2_sq)
+
+        with np.errstate(invalid="ignore", divide="ignore"):
+            cos12 = np.where(k2 > 1e-10, (ki * mu2d - q2d) / k2, 0.0)
+
+        # F2 kernel (same as compute_P22)
+        f2 = (
+            5.0 / 7.0
+            + 0.5 * (q2d / k2 + k2 / q2d) * cos12
+            + 2.0 / 7.0 * cos12 ** 2
+        )
+        f2 = np.where(k2 > 1e-10, f2, 0.0)
+
+        # G2 (tidal) kernel
+        g2 = cos12 ** 2 - 1.0 / 3.0                          # (nq, nmu)
+
+        plin_k2 = plin_func(k2.ravel()).reshape(k2.shape)     # (nq, nmu)
+
+        base = q2d ** 3 * plin_q[:, np.newaxis] * plin_k2    # (nq, nmu)
+
+        # Accumulate five integrands
+        ig_I12 = 2.0 * base * f2
+        ig_J12 = 2.0 * base * g2
+        ig_I22 = base * 1.0                                    # kernel = 1/2, factor 2 cancels
+        ig_I2K = base * g2                                     # kernel = g2/2, factor 2 cancels
+        ig_J22 = base * g2 ** 2                                # kernel = g2^2/2, factor 2 cancels
+
+        def _integrate(ig):
+            mu_int = np.trapz(ig, mu_arr, axis=1)             # (nq,)
+            return np.trapz(mu_int, ln_q)
+
+        I12[i] = _integrate(ig_I12)
+        J12[i] = _integrate(ig_J12)
+        I22[i] = _integrate(ig_I22)
+        I2K[i] = _integrate(ig_I2K)
+        J22[i] = _integrate(ig_J22)
+
+    prefactor = 1.0 / (4.0 * np.pi ** 2)
+    return {
+        "I12": I12 * prefactor,
+        "J12": J12 * prefactor,
+        "I22": I22 * prefactor,
+        "I2K": I2K * prefactor,
+        "J22": J22 * prefactor,
+    }
+
+
 def compute_one_loop_matter(
     k,
     plin_func,

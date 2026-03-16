@@ -26,7 +26,7 @@ from inference_dsg import make_diagonal_cov, make_log_likelihood
 # Constants
 # ---------------------------------------------------------------------------
 SPACE      = "redshift"  # "redshift" | "real"
-MODEL_MODE = "eft_lite"  # "tree_only" | "eft_lite" | "eft_full"
+MODEL_MODE = "eft_full"  # "tree_only" | "eft_lite" | "eft_full" | "one_loop"
 
 MEAS_PATH  = Path(__file__).parents[1] / "outputs" / "hods" / "mesh2_spectrum_poles_c000_hod006.h5"
 COV_DIR    = Path(__file__).parents[1] / "outputs" / "hods" / "for_covariance"
@@ -56,12 +56,15 @@ def _build_params(model_mode, vary_cosmo=False):
         param_names = ["b1"]
         bounds = np.array([[0.5, 4.0]])
 
-    if model_mode in ("eft_lite", "eft_full"):
+    if model_mode in ("eft_lite", "eft_full", "one_loop"):
         param_names += ["c0"]
         bounds = np.vstack([bounds, [[-50.0, 50.0]]])
-    if model_mode == "eft_full":
+    if model_mode in ("eft_full", "one_loop"):
         param_names += ["s0"]
         bounds = np.vstack([bounds, [[-5000.0, 5000.0]]])
+    if model_mode == "one_loop":
+        param_names += ["b2", "bs2"]
+        bounds = np.vstack([bounds, [[-4.0, 4.0], [-4.0, 4.0]]])
 
     return param_names, bounds
 
@@ -80,16 +83,24 @@ def _unpack_theta(theta, mode, vary_cosmo=False):
         sigma8  = float(theta[idx]); idx += 1
         omega_m = float(theta[idx]); idx += 1
     b1 = float(theta[idx]); idx += 1
-    c0, s0 = 0.0, 0.0
-    if mode in ("eft_lite", "eft_full"):
+    c0, s0, b2, bs2 = 0.0, 0.0, 0.0, 0.0
+    if mode in ("eft_lite", "eft_full", "one_loop"):
         c0 = float(theta[idx]); idx += 1
-    if mode == "eft_full":
+    if mode in ("eft_full", "one_loop"):
         s0 = float(theta[idx]); idx += 1
-    return dict(b1=b1, c0=c0, s0=s0, sigma8=sigma8, omega_m=omega_m)
+    if mode == "one_loop":
+        b2  = float(theta[idx]); idx += 1
+        bs2 = float(theta[idx]); idx += 1
+    return dict(b1=b1, c0=c0, s0=s0, b2=b2, bs2=bs2, sigma8=sigma8, omega_m=omega_m)
 
 
 def make_eft_theory_model(cosmo, k, ells, mode, cosmo_grid=None):
     """Return a callable theta -> flat_data_vector using GalaxyTemplateEmulator."""
+    if mode == "one_loop":
+        raise ValueError(
+            "mode='one_loop' is not supported by the template emulator. "
+            "Pass --no-emulator to use direct GL quadrature."
+        )
     vary_cosmo = cosmo_grid is not None
     emulator = GalaxyTemplateEmulator(
         cosmo, k, ells=ells, z=Z, space=SPACE, mode=mode,
@@ -118,7 +129,10 @@ def make_direct_theory_model(cosmo, k, ells, mode, vary_cosmo=False):
             get_cosmology({"sigma8": p["sigma8"], "Omega_m": p["omega_m"]})
             if vary_cosmo else cosmo
         )
-        gal = GalaxyEFTParams(b1=p["b1"], c0=p["c0"], s0=p["s0"])
+        gal = GalaxyEFTParams(
+            b1=p["b1"], c0=p["c0"], s0=p["s0"],
+            b2=p.get("b2", 0.0), bs2=p.get("bs2", 0.0),
+        )
 
         def model(kk, mu):
             return pgg_eft_mu(

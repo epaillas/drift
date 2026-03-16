@@ -69,6 +69,43 @@ def _pqg_tree_eft(
         return (plin * wk)[:, np.newaxis] * ds_factor * gal_rsd[np.newaxis, :]
 
 
+def _pqg_ds_lin(
+    k: np.ndarray,
+    mu: np.ndarray,
+    plin: np.ndarray,
+    wk: np.ndarray,
+    f: float,
+    ds_params: DSSplitBinEFT,
+    ds_model: str,
+) -> np.ndarray:
+    """DS × linear matter cross-spectrum at tree level (no galaxy bias factor).
+
+    Parameters
+    ----------
+    k : np.ndarray, shape (nk,)
+    mu : np.ndarray, shape (nmu,)
+    plin : np.ndarray, shape (nk,)
+    wk : np.ndarray, shape (nk,)
+    f : float
+    ds_params : DSSplitBinEFT
+    ds_model : str
+
+    Returns
+    -------
+    np.ndarray, shape (nk, nmu)
+    """
+    bq1 = ds_params.bq1
+    if ds_model == "baseline":
+        return (bq1 * plin * wk)[:, np.newaxis] * np.ones((1, len(mu)))
+    elif ds_model == "rsd_selection":
+        ds_angular = 1.0 + f * mu**2                              # (nmu,)
+        return (bq1 * plin * wk)[:, np.newaxis] * ds_angular[np.newaxis, :]
+    else:  # phenomenological
+        beta_q = ds_params.beta_q
+        ds_angular = bq1 + beta_q * f * mu**2                    # (nmu,)
+        return (plin * wk)[:, np.newaxis] * ds_angular[np.newaxis, :]
+
+
 def _pqg_one_loop_partial(
     k: np.ndarray,
     mu: np.ndarray,
@@ -221,8 +258,8 @@ def pqg_eft_mu(
     tree_normed = _pqg_tree_eft(k, mu, plin, wk, f, ds_normed, gal_normed, ds_model)
 
     P = _pqg_tree_eft(k, mu, plin, wk, f, ds_params, gal_params, ds_model)
-    ds_amplitude = ds_params.bq1 * wk
-    P = P + galaxy_counterterm(k, mu, plin, gal_params, ds_amplitude)
+    ds_lin = _pqg_ds_lin(k, mu, plin, wk, f, ds_params, ds_model)
+    P = P + galaxy_counterterm(k, mu, gal_params, ds_lin)
     P = P + ds_counterterm(k, mu, plin, ds_params, tree_normed, R)
 
     if mode == "eft_full":

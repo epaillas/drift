@@ -11,6 +11,7 @@ import numpy as np
 from .cosmology import get_linear_power, get_growth_rate
 
 _VALID_MODES = ("tree_only", "eft_lite", "eft_full")
+_EMULATOR_UNSUPPORTED_MODES = ("one_loop",)
 
 # Analytic Legendre moments (same as emulator.py)
 #   _M[ell][n] = (2*ell+1)/2 * int_{-1}^{1} L_ell(mu) * mu^n dmu
@@ -51,6 +52,11 @@ class GalaxyTemplateEmulator:
         space="redshift",
         mode="eft_lite",
     ):
+        if mode in _EMULATOR_UNSUPPORTED_MODES:
+            raise ValueError(
+                f"Mode '{mode}' requires numerical loop integration and is not "
+                "supported by GalaxyTemplateEmulator. Use --no-emulator."
+            )
         if mode not in _VALID_MODES:
             raise ValueError(f"Unknown mode '{mode}'. Choose one of {_VALID_MODES}.")
         for ell in ells:

@@ -16,11 +16,11 @@ _VALID_DS_MODELS = ("baseline", "rsd_selection", "phenomenological")
 
 # Analytic Legendre moments
 #   _M[ell][n] = (2*ell+1)/2 * int_{-1}^{1} L_ell(mu) * mu^n dmu
-# Non-zero entries for even n = 0, 2, 4 and ell = 0, 2, 4:
+# Non-zero entries for even n = 0, 2, 4, 6 and ell = 0, 2, 4:
 _M = {
-    0: {0: 1.0,       2: 1.0 / 3.0,  4: 1.0 / 5.0},
-    2: {0: 0.0,       2: 2.0 / 3.0,  4: 4.0 / 7.0},
-    4: {0: 0.0,       2: 0.0,        4: 8.0 / 35.0},
+    0: {0: 1.0,  2: 1.0 / 3.0,  4: 1.0 / 5.0,  6: 1.0 / 7.0},
+    2: {0: 0.0,  2: 2.0 / 3.0,  4: 4.0 / 7.0,  6: 10.0 / 21.0},
+    4: {0: 0.0,  2: 0.0,        4: 8.0 / 35.0, 6: 24.0 / 77.0},
 }
 
 
@@ -105,12 +105,33 @@ class TemplateEmulator:
                 f"Unknown kernel '{self.kernel}'. Choose 'gaussian' or 'tophat'."
             )
         self.f = get_growth_rate(cosmo, self.z) if self.space == "redshift" else 0.0
+        self._wk = wk
 
         A = plin * wk
         self._T_A = A                         # Plin * W_R
         self._T_k2A = k ** 2 * A             # k^2 * Plin * W_R
         self._T_k2R2A = (k * self.R) ** 2 * A  # (kR)^2 * Plin * W_R
         self._T_k2 = k ** 2                  # k^2 (stochastic shape)
+
+    # ------------------------------------------------------------------
+    # Cosmology update
+    # ------------------------------------------------------------------
+
+    def update_cosmology(self, plin: np.ndarray, f: float) -> None:
+        """Recompute templates for a new (plin, f) without reinitialising.
+
+        ~0.01 ms per call. Intended for use in cosmology-varying MCMC loops.
+
+        Parameters
+        ----------
+        plin : np.ndarray, shape (nk,)
+        f : float
+        """
+        A = np.asarray(plin, dtype=float) * self._wk
+        self._T_A     = A
+        self._T_k2A   = self.k ** 2 * A
+        self._T_k2R2A = (self.k * self.R) ** 2 * A
+        self.f        = float(f)
 
     # ------------------------------------------------------------------
     # Core analytic projection
@@ -134,6 +155,7 @@ class TemplateEmulator:
         M0 = _M[ell][0]
         M2 = _M[ell][2]
         M4 = _M[ell][4]
+        M6 = _M[ell][6]
         f = self.f
         A = self._T_A
         k2A = self._T_k2A
@@ -161,13 +183,32 @@ class TemplateEmulator:
             cm2 = f * (bq1 + beta_q * b1) * A
             cm4 = beta_q * f ** 2 * A
 
+        cm6 = np.zeros_like(A)
+
         # ---- EFT counterterms ----
         if self.mode != "tree_only":
-            # Galaxy counterterm: -bq1 * k^2*A * (c0 + c2*mu^2 + c4*mu^4)
-            # (ds_amplitude = bq1 * W_R, so factor = bq1 * k^2 * A)
-            cm0 = cm0 - c0 * bq1 * k2A
-            cm2 = cm2 - c2 * bq1 * k2A
-            cm4 = cm4 - c4 * bq1 * k2A
+            # Galaxy counterterm: -k^2 * P_{DS×lin}(k,mu) * (c0 + c2*mu^2 + c4*mu^4)
+            # P_{DS×lin} carries the DS angular structure (no galaxy bias factor):
+            #   baseline:        bq1 * A
+            #   rsd_selection:   bq1 * A * (1 + f*mu^2)
+            #   phenomenological: A * (bq1 + beta_q*f*mu^2)
+            # Expanding the product gives the mu-polynomial coefficients below.
+            if self.ds_model == "baseline":
+                cm0 = cm0 - c0 * bq1 * k2A
+                cm2 = cm2 - c2 * bq1 * k2A
+                cm4 = cm4 - c4 * bq1 * k2A
+            elif self.ds_model == "rsd_selection":
+                # P_{DS×lin} * CT_shape = bq1*A*(1+f*mu^2)*(c0+c2*mu^2+c4*mu^4)
+                cm0 = cm0 - c0 * bq1 * k2A
+                cm2 = cm2 - (c2 + c0 * f) * bq1 * k2A
+                cm4 = cm4 - (c4 + c2 * f) * bq1 * k2A
+                cm6 = cm6 - c4 * f * bq1 * k2A
+            else:  # phenomenological
+                # P_{DS×lin} * CT_shape = A*(bq1+beta_q*f*mu^2)*(c0+c2*mu^2+c4*mu^4)
+                cm0 = cm0 - bq1 * c0 * k2A
+                cm2 = cm2 - (bq1 * c2 + beta_q * f * c0) * k2A
+                cm4 = cm4 - (bq1 * c4 + beta_q * f * c2) * k2A
+                cm6 = cm6 - beta_q * f * c4 * k2A
 
             # DS higher-derivative counterterm: bq_nabla2 * (kR)^2 * tree_normed
             # tree_normed uses bq1=1 and beta_q=0 (ds_normed defaults).
@@ -186,7 +227,7 @@ class TemplateEmulator:
         if self.mode == "eft_full":
             cm0 = cm0 + s0 + s2 * k2
 
-        return M0 * cm0 + M2 * cm2 + M4 * cm4
+        return M0 * cm0 + M2 * cm2 + M4 * cm4 + M6 * cm6
 
     # ------------------------------------------------------------------
     # Public interface

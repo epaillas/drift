@@ -7,7 +7,7 @@ Gauss-Legendre projection of pqg_eft_mu to rtol=1e-10.
 import numpy as np
 import pytest
 
-from drift.cosmology import get_cosmology
+from drift.cosmology import get_cosmology, get_linear_power, get_growth_rate
 from drift.eft_bias import DSSplitBinEFT, GalaxyEFTParams
 from drift.eft_models import pqg_eft_mu
 from drift.multipoles import compute_multipoles
@@ -221,3 +221,31 @@ def test_invalid_mode_raises(cosmo, k):
 def test_invalid_ell_raises(cosmo, k):
     with pytest.raises(ValueError, match="Unsupported ell"):
         TemplateEmulator(cosmo, k, ells=(0, 3))
+
+
+# ---------------------------------------------------------------------------
+# update_cosmology: must match a freshly constructed emulator
+# ---------------------------------------------------------------------------
+
+def test_update_cosmology_matches_new_instance(k):
+    """update_cosmology(plin, f) must produce identical output to a fresh instance."""
+    cosmo_old = get_cosmology({"sigma8": 0.75, "Omega_m": 0.28})
+    cosmo_new = get_cosmology({"sigma8": 0.85, "Omega_m": 0.33})
+
+    plin_new = get_linear_power(cosmo_new, k, Z)
+    f_new    = get_growth_rate(cosmo_new, Z)
+
+    # Reference: fresh emulator at new cosmology
+    em_ref = TemplateEmulator(cosmo_new, k, ells=ELLS, z=Z, R=R,
+                              ds_model="baseline", mode="eft_lite")
+    params = {"b1": 2.0, "bq1": [0.5, -1.0], "c0": 3.0}
+    pred_ref = em_ref.predict(params)
+
+    # Test: old emulator updated in-place
+    em_upd = TemplateEmulator(cosmo_old, k, ells=ELLS, z=Z, R=R,
+                              ds_model="baseline", mode="eft_lite")
+    em_upd.update_cosmology(plin_new, f_new)
+    pred_upd = em_upd.predict(params)
+
+    np.testing.assert_allclose(pred_upd, pred_ref, rtol=1e-12,
+        err_msg="update_cosmology result differs from fresh TemplateEmulator")

@@ -4,8 +4,23 @@ import numpy as np
 
 from .cosmology import get_linear_power, get_growth_rate
 from .eft_bias import GalaxyEFTParams
+from .one_loop import compute_P22, compute_P13, compute_bias_loops
 
-_VALID_MODES = ("tree_only", "eft_lite", "eft_full")
+_VALID_MODES = ("tree_only", "eft_lite", "eft_full", "one_loop")
+
+
+def _compute_loop_templates(k, plin_func):
+    """Compute all 7 one-loop arrays needed for the one_loop mode.
+
+    Returns
+    -------
+    dict with keys 'p22', 'p13', 'I12', 'J12', 'I22', 'I2K', 'J22',
+    each shape (nk,).
+    """
+    p22 = compute_P22(k, plin_func)
+    p13 = compute_P13(k, plin_func)
+    bias = compute_bias_loops(k, plin_func)
+    return {"p22": p22, "p13": p13, **bias}
 
 
 def pgg_mu(k, mu, z, cosmo, b1, space="redshift"):
@@ -76,18 +91,36 @@ def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_lite"):
     mu = np.asarray(mu, dtype=float)
     plin = get_linear_power(cosmo, k, z)   # (nk,)
 
+    b1 = gal_params.b1
+
     if space == "real":
-        P = (gal_params.b1 ** 2 * plin)[:, np.newaxis] * np.ones((1, len(mu)))
-        if mode == "eft_full":
+        if mode == "one_loop":
+            def plin_func(kk):
+                return get_linear_power(cosmo, np.asarray(kk, dtype=float), z)
+
+            loops = _compute_loop_templates(k, plin_func)
+            b2  = gal_params.b2
+            bs2 = gal_params.bs2
+            p_loop_bias = (
+                2.0 * b1 * b2   * loops["I12"]
+                + 2.0 * b1 * bs2 * loops["J12"]
+                + b2 ** 2        * loops["I22"]
+                + 2.0 * b2 * bs2 * loops["I2K"]
+                + bs2 ** 2       * loops["J22"]
+            )
+            P_real = b1 ** 2 * (plin + loops["p22"] + loops["p13"]) + p_loop_bias
+            P = P_real[:, np.newaxis] * np.ones((1, len(mu)))
+        else:
+            P = (b1 ** 2 * plin)[:, np.newaxis] * np.ones((1, len(mu)))
+        if mode in ("eft_full", "one_loop"):
             P = P + (gal_params.s0 + gal_params.s2 * k ** 2)[:, np.newaxis]
         return P
 
     f = get_growth_rate(cosmo, z)
 
     if mode == "tree_only":
-        return pgg_mu(k, mu, z, cosmo, gal_params.b1, space=space)
+        return pgg_mu(k, mu, z, cosmo, b1, space=space)
 
-    b1 = gal_params.b1
     kaiser = b1 + f * mu ** 2   # (nmu,)
     P = plin[:, np.newaxis] * kaiser[np.newaxis, :] ** 2
 
@@ -102,6 +135,41 @@ def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_lite"):
         P = P + counterterm
 
     if mode == "eft_full":
+        P = P + (gal_params.s0 + gal_params.s2 * k ** 2)[:, np.newaxis]
+
+    if mode == "one_loop":
+        b2  = gal_params.b2
+        bs2 = gal_params.bs2
+
+        def plin_func(kk):
+            return get_linear_power(cosmo, np.asarray(kk, dtype=float), z)
+
+        loops = _compute_loop_templates(k, plin_func)
+        p22, p13 = loops["p22"], loops["p13"]
+
+        p_loop_bias = (
+            2.0 * b1 * b2   * loops["I12"]
+            + 2.0 * b1 * bs2 * loops["J12"]
+            + b2 ** 2        * loops["I22"]
+            + 2.0 * b2 * bs2 * loops["I2K"]
+            + bs2 ** 2       * loops["J22"]
+        )  # (nk,)
+
+        # Add isotropic loop corrections to tree-level Kaiser
+        P_loop_matter = b1 ** 2 * (p22 + p13)  # (nk,)
+        P = P + P_loop_matter[:, np.newaxis] + p_loop_bias[:, np.newaxis]
+
+        # EFT counterterm
+        c0 = gal_params.c0
+        c2 = gal_params.c2
+        c4 = gal_params.c4
+        ct_shape = c0 + c2 * mu ** 2 + c4 * mu ** 4
+        counterterm = (
+            -2.0 * k ** 2 * plin
+        )[:, np.newaxis] * ct_shape[np.newaxis, :] * kaiser[np.newaxis, :]
+        P = P + counterterm
+
+        # Stochastic term
         P = P + (gal_params.s0 + gal_params.s2 * k ** 2)[:, np.newaxis]
 
     return P

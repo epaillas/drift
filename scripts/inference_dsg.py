@@ -16,7 +16,7 @@ from scipy.stats import uniform as sp_uniform
 import pocomc
 from pocomc import Sampler, Prior
 
-from drift.cosmology import get_cosmology
+from drift.cosmology import get_cosmology, LinearPowerGrid
 from drift.emulator import TemplateEmulator
 from drift.io import load_measurements
 
@@ -37,7 +37,7 @@ Z = 0.5
 R = 10.0
 KERNEL    = "gaussian"
 ELLS      = (0, 2)
-QUANTILES = (1, 5)
+QUANTILES = (1, 2, 4, 5)
 
 
 def _parse_kmax(kmax_args, ells):
@@ -74,13 +74,22 @@ def _build_data_mask(k, ells, quantiles, kmax_dict):
     return np.concatenate(segments)
 
 
-def _build_params(ds_model, model_mode, quantiles):
+def _build_params(ds_model, model_mode, quantiles, vary_cosmo=False):
     """Return (param_names, bounds) for the given model configuration."""
-    param_names = ["b1"] + [f"bq1_{q}" for q in quantiles]
-    bounds = np.array([
-        [0.5, 4.0],
-        *[[-4.0, 4.0] for _ in quantiles],
-    ])
+    if vary_cosmo:
+        param_names = ["sigma8", "Omega_m", "b1"] + [f"bq1_{q}" for q in quantiles]
+        bounds = np.array([
+            [0.6, 1.2],
+            [0.2, 0.5],
+            [0.5, 4.0],
+            *[[-4.0, 4.0] for _ in quantiles],
+        ])
+    else:
+        param_names = ["b1"] + [f"bq1_{q}" for q in quantiles]
+        bounds = np.array([
+            [0.5, 4.0],
+            *[[-4.0, 4.0] for _ in quantiles],
+        ])
     if model_mode in ("eft_lite", "eft_full"):
         param_names += ["c0"]
         bounds = np.vstack([bounds, [[-50.0, 50.0]]])
@@ -96,17 +105,24 @@ def _build_params(ds_model, model_mode, quantiles):
     return param_names, bounds
 
 
-PARAM_NAMES, BOUNDS = _build_params(DS_MODEL, MODEL_MODE, QUANTILES)
+VARY_COSMO = False   # set True to jointly infer sigma8, Omega_m
+
+PARAM_NAMES, BOUNDS = _build_params(DS_MODEL, MODEL_MODE, QUANTILES, vary_cosmo=VARY_COSMO)
 
 
 # ---------------------------------------------------------------------------
 # Theory model
 # ---------------------------------------------------------------------------
-def _unpack_theta(theta, n_bq, mode, ds_model):
+def _unpack_theta(theta, n_bq, mode, ds_model, vary_cosmo=False):
     """Unpack flat parameter vector into a dict."""
-    b1 = theta[0]
-    bq1_vals = theta[1:1 + n_bq]
-    idx = 1 + n_bq
+    idx = 0
+    sigma8, omega_m = None, None
+    if vary_cosmo:
+        sigma8  = float(theta[idx]); idx += 1
+        omega_m = float(theta[idx]); idx += 1
+    b1 = theta[idx]; idx += 1
+    bq1_vals = theta[idx:idx + n_bq]
+    idx += n_bq
     c0, s0 = 0.0, 0.0
     if mode in ("eft_lite", "eft_full"):
         c0 = theta[idx]; idx += 1
@@ -118,11 +134,21 @@ def _unpack_theta(theta, n_bq, mode, ds_model):
         beta_q_vals = [0.0] * n_bq
     bq_nabla2_vals = theta[idx:idx + n_bq] if mode in ("eft_lite", "eft_full") else [0.0] * n_bq
     return dict(b1=float(b1), bq1_vals=bq1_vals, c0=float(c0), s0=float(s0),
-                beta_q_vals=beta_q_vals, bq_nabla2_vals=bq_nabla2_vals)
+                beta_q_vals=beta_q_vals, bq_nabla2_vals=bq_nabla2_vals,
+                sigma8=sigma8, omega_m=omega_m)
 
 
-def make_eft_theory_model(cosmo, k, ells, quantiles, ds_model, mode):
-    """Return a callable theta -> flat_data_vector using TemplateEmulator."""
+def make_eft_theory_model(cosmo, k, ells, quantiles, ds_model, mode,
+                          cosmo_grid=None):
+    """Return a callable theta -> flat_data_vector using TemplateEmulator.
+
+    Parameters
+    ----------
+    cosmo_grid : LinearPowerGrid, optional
+        If provided, sigma8 and Omega_m are treated as free parameters and
+        the emulator is updated via ``update_cosmology`` each step.
+    """
+    vary_cosmo = cosmo_grid is not None
     n_bq = len(quantiles)
     emulator = TemplateEmulator(
         cosmo, k, ells=ells, z=Z, R=R,
@@ -131,7 +157,10 @@ def make_eft_theory_model(cosmo, k, ells, quantiles, ds_model, mode):
     )
 
     def theory(theta):
-        p = _unpack_theta(theta, n_bq, mode, ds_model)
+        p = _unpack_theta(theta, n_bq, mode, ds_model, vary_cosmo=vary_cosmo)
+        if vary_cosmo:
+            plin, f = cosmo_grid.predict(p["sigma8"], p["omega_m"])
+            emulator.update_cosmology(plin, f)
         params = {
             "b1": p["b1"],
             "bq1": [float(v) for v in p["bq1_vals"]],
@@ -145,11 +174,14 @@ def make_eft_theory_model(cosmo, k, ells, quantiles, ds_model, mode):
     return theory
 
 
-def make_direct_theory_model(cosmo, k, ells, quantiles, ds_model, mode):
+def make_direct_theory_model(cosmo, k, ells, quantiles, ds_model, mode,
+                             vary_cosmo=False):
     """Return a callable theta -> flat_data_vector using direct GL quadrature.
 
     Slower reference implementation — useful as a sanity-check against the
-    template emulator.
+    template emulator, and as the evaluation path for best-fit plotting.
+    When vary_cosmo=True, sigma8 and Omega_m are taken from theta and a
+    fresh cosmology object is built per call.
     """
     from drift.eft_bias import DSSplitBinEFT, GalaxyEFTParams
     from drift.eft_models import pqg_eft_mu
@@ -158,7 +190,11 @@ def make_direct_theory_model(cosmo, k, ells, quantiles, ds_model, mode):
     n_bq = len(quantiles)
 
     def theory(theta):
-        p = _unpack_theta(theta, n_bq, mode, ds_model)
+        p = _unpack_theta(theta, n_bq, mode, ds_model, vary_cosmo=vary_cosmo)
+        eval_cosmo = (
+            get_cosmology({"sigma8": p["sigma8"], "Omega_m": p["omega_m"]})
+            if vary_cosmo else cosmo
+        )
         gal = GalaxyEFTParams(b1=p["b1"], c0=p["c0"], s0=p["s0"])
         vec = []
         for q, bq1, betaq, bq_nabla2 in zip(
@@ -169,9 +205,9 @@ def make_direct_theory_model(cosmo, k, ells, quantiles, ds_model, mode):
                 beta_q=float(betaq), bq_nabla2=float(bq_nabla2),
             )
 
-            def model(kk, mu, _ds=ds_bin, _gal=gal):
+            def model(kk, mu, _ds=ds_bin, _gal=gal, _cosmo=eval_cosmo):
                 return pqg_eft_mu(
-                    kk, mu, z=Z, cosmo=cosmo,
+                    kk, mu, z=Z, cosmo=_cosmo,
                     ds_params=_ds, gal_params=_gal,
                     R=R, kernel=KERNEL, space=SPACE,
                     ds_model=ds_model, mode=mode,
@@ -219,6 +255,12 @@ def main():
         ),
     )
     parser.add_argument(
+        "--vary-cosmo",
+        action="store_true",
+        default=VARY_COSMO,
+        help="Jointly infer sigma8 and Omega_m alongside EFT/bias parameters.",
+    )
+    parser.add_argument(
         "--kmax",
         nargs="+",
         default=None,
@@ -228,13 +270,34 @@ def main():
             "to all multipoles) or 'ell:value' pairs, e.g. '0:0.3 2:0.2'."
         ),
     )
+    parser.add_argument(
+        "--rebin",
+        type=int,
+        default=5,
+        metavar="N",
+        help="Keep every Nth k-bin when loading measurements (default: 5).",
+    )
+    parser.add_argument(
+        "--cov-rescale",
+        type=float,
+        default=64.0,
+        metavar="FACTOR",
+        help="Divide the covariance matrix by this factor (default: 64).",
+    )
     args = parser.parse_args()
+
+    vary_cosmo = args.vary_cosmo
+    if vary_cosmo != VARY_COSMO:
+        # Rebuild param names / bounds for the chosen mode
+        global PARAM_NAMES, BOUNDS
+        PARAM_NAMES, BOUNDS = _build_params(DS_MODEL, MODEL_MODE, QUANTILES,
+                                            vary_cosmo=vary_cosmo)
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     # 1. Load measurements
     print(f"Loading measurements from {MEAS_PATH} ...")
-    k, multipoles_per_bin = load_measurements(MEAS_PATH, nquantiles=max(QUANTILES), ells=ELLS)
+    k, multipoles_per_bin = load_measurements(MEAS_PATH, nquantiles=max(QUANTILES), ells=ELLS, rebin=args.rebin)
     print(f"  k range: [{k.min():.4f}, {k.max():.4f}] h/Mpc  ({len(k)} bins)")
 
     # Build flat data vector
@@ -261,6 +324,11 @@ def main():
 
     # 3. Theory model
     print(f"  DS model: {DS_MODEL},  EFT mode: {MODEL_MODE}")
+    cosmo_grid = None
+    if vary_cosmo and not args.no_emulator:
+        print("Precomputing LinearPowerGrid (sigma8 × Omega_m) ...")
+        cosmo_grid = LinearPowerGrid(k, z=Z)
+        print("  done.")
     if args.no_emulator:
         print("Using direct GL quadrature (--no-emulator) ...")
         theory_fn = make_direct_theory_model(
@@ -272,10 +340,11 @@ def main():
         theory_fn = make_eft_theory_model(
             cosmo, k, ells=ELLS,
             quantiles=QUANTILES, ds_model=DS_MODEL, mode=MODEL_MODE,
+            cosmo_grid=cosmo_grid,
         )
     print("  done.")
     theory_fn_masked = lambda theta: theory_fn(theta)[mask]
-    cov = make_diagonal_cov(data_y_masked)
+    cov = make_diagonal_cov(data_y_masked) / args.cov_rescale
     precision_matrix = np.linalg.inv(cov)
 
     # 5. Log-likelihood

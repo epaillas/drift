@@ -157,7 +157,6 @@ def main():
         ax.set_title(rf"$\ell = {ell}$")
         ax.set_xlabel(r"$k$ [$h$/Mpc]")
         ax.set_ylabel(rf"$k\,P_{{{ell}}}$" + r" [$({\rm Mpc}/h)^2$]")
-        ax.set_xscale("log")
         ax.axhline(0, color="k", lw=0.5, ls="--")
         ax.legend(fontsize=8)
 

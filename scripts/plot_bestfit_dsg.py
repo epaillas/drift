@@ -19,9 +19,8 @@ import matplotlib.pyplot as plt
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from drift.cosmology import get_cosmology
-from drift.emulator import TemplateEmulator
 from drift.io import load_measurements
-from inference_dsg import _parse_kmax, _build_data_mask
+from inference_dsg import _parse_kmax, _build_data_mask, make_direct_theory_model
 
 SPACE      = "redshift"         # "redshift" | "real"
 DS_MODEL   = "phenomenological" # "baseline" | "rsd_selection" | "phenomenological"
@@ -40,13 +39,20 @@ KERNEL      = "gaussian"
 NOISE_FRAC  = 0.05
 NOISE_FLOOR = 50.0
 ELLS      = (0, 2)
-QUANTILES = (1, 5)
+QUANTILES = (1, 2, 4, 5)
 
 
-def _build_params(ds_model, model_mode, quantiles):
+VARY_COSMO = False   # set True to jointly infer sigma8, Omega_m
+
+
+def _build_params(ds_model, model_mode, quantiles, vary_cosmo=False):
     """Return (param_names, labels) for the given model configuration."""
-    param_names = ["b1"] + [f"bq1_{q}" for q in quantiles]
-    labels      = [r"$b_1$"] + [rf"$b_{{q1,{q}}}$" for q in quantiles]
+    if vary_cosmo:
+        param_names = ["sigma8", "Omega_m", "b1"] + [f"bq1_{q}" for q in quantiles]
+        labels      = [r"$\sigma_8$", r"$\Omega_m$", r"$b_1$"] + [rf"$b_{{q1,{q}}}$" for q in quantiles]
+    else:
+        param_names = ["b1"] + [f"bq1_{q}" for q in quantiles]
+        labels      = [r"$b_1$"] + [rf"$b_{{q1,{q}}}$" for q in quantiles]
     if model_mode in ("eft_lite", "eft_full"):
         param_names += ["c0"]
         labels      += [r"$c_0$"]
@@ -62,44 +68,7 @@ def _build_params(ds_model, model_mode, quantiles):
     return param_names, labels
 
 
-PARAM_NAMES, LABELS = _build_params(DS_MODEL, MODEL_MODE, QUANTILES)
-
-
-def make_eft_theory_model(cosmo, k, ells, quantiles, ds_model, mode):
-    """Return a callable theta -> flat_data_vector using TemplateEmulator."""
-    n_bq = len(quantiles)
-    emulator = TemplateEmulator(
-        cosmo, k, ells=ells, z=Z, R=R,
-        kernel=KERNEL, space=SPACE,
-        ds_model=ds_model, mode=mode,
-    )
-
-    def theory(theta):
-        b1 = theta[0]
-        bq1_vals = theta[1:1 + n_bq]
-        idx = 1 + n_bq
-        c0, s0 = 0.0, 0.0
-        if mode in ("eft_lite", "eft_full"):
-            c0 = theta[idx]; idx += 1
-        if mode == "eft_full":
-            s0 = theta[idx]; idx += 1
-        if ds_model == "phenomenological":
-            beta_q_vals = theta[idx:idx + n_bq]; idx += n_bq
-        else:
-            beta_q_vals = [0.0] * n_bq
-        bq_nabla2_vals = theta[idx:idx + n_bq] if mode in ("eft_lite", "eft_full") else [0.0] * n_bq
-
-        params = {
-            "b1": float(b1),
-            "bq1": [float(v) for v in bq1_vals],
-            "c0": float(c0),
-            "s0": float(s0),
-            "beta_q": [float(v) for v in beta_q_vals],
-            "bq_nabla2": [float(v) for v in bq_nabla2_vals],
-        }
-        return emulator.predict(params)
-
-    return theory
+PARAM_NAMES, LABELS = _build_params(DS_MODEL, MODEL_MODE, QUANTILES, vary_cosmo=VARY_COSMO)
 
 
 def main():
@@ -114,9 +83,36 @@ def main():
             "to all multipoles) or 'ell:value' pairs, e.g. '0:0.3 2:0.2'."
         ),
     )
+    parser.add_argument(
+        "--vary-cosmo",
+        action="store_true",
+        default=VARY_COSMO,
+        help="Chains include sigma8 and Omega_m as free parameters.",
+    )
+    parser.add_argument(
+        "--rebin",
+        type=int,
+        default=5,
+        metavar="N",
+        help="Keep every Nth k-bin when loading measurements (default: 5).",
+    )
+    parser.add_argument(
+        "--cov-rescale",
+        type=float,
+        default=64.0,
+        metavar="FACTOR",
+        help="Divide the covariance matrix by this factor (default: 64).",
+    )
     args = parser.parse_args()
+    vary_cosmo = args.vary_cosmo
+
+    if vary_cosmo != VARY_COSMO:
+        global PARAM_NAMES, LABELS
+        PARAM_NAMES, LABELS = _build_params(DS_MODEL, MODEL_MODE, QUANTILES,
+                                            vary_cosmo=vary_cosmo)
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
 
     # Load chains
     d = np.load(CHAINS_PATH, allow_pickle=True)
@@ -129,7 +125,7 @@ def main():
         print(f"  {name}: {val:.4f}")
 
     # Load measurements
-    k, measured = load_measurements(MEAS_PATH, nquantiles=max(QUANTILES), ells=ELLS)
+    k, measured = load_measurements(MEAS_PATH, nquantiles=max(QUANTILES), ells=ELLS, rebin=args.rebin)
 
     # Build kmax mask
     kmax_dict = _parse_kmax(args.kmax, ELLS)
@@ -141,15 +137,16 @@ def main():
         errors[label] = {}
         for ell in ELLS:
             p = measured[label][ell]
-            errors[label][ell] = np.sqrt((NOISE_FRAC * np.abs(p)) ** 2 + NOISE_FLOOR ** 2)
+            errors[label][ell] = np.sqrt((NOISE_FRAC * np.abs(p)) ** 2 + NOISE_FLOOR ** 2) / np.sqrt(args.cov_rescale)
 
     # Evaluate theory at best-fit
     cosmo = get_cosmology()
-    theory_fn = make_eft_theory_model(
+    theory_fn = make_direct_theory_model(
         cosmo, k, ells=ELLS,
         quantiles=QUANTILES, ds_model=DS_MODEL, mode=MODEL_MODE,
+        vary_cosmo=vary_cosmo,
     )
-    pred      = theory_fn(theta_bf)
+    pred = theory_fn(theta_bf)
 
     # Reshape flat vector -> {DS_label: {ell: array}}
     theory_bf = {}
