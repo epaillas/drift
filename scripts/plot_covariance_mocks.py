@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from drift.io import load_covariance_mocks
+from drift.io import _load_ds_mocks
 
 COV_DIR   = Path(__file__).parents[1] / "outputs" / "hods" / "for_covariance"
 ELLS      = (0, 2)
@@ -37,7 +37,7 @@ def main():
     args = parser.parse_args()
 
     print(f"Loading mocks from {COV_DIR} ...")
-    k, mock_matrix = load_covariance_mocks(
+    k, mock_matrix = _load_ds_mocks(
         COV_DIR, nquantiles=NQUANTILES, quantiles=QUANTILES, ells=ELLS, rebin=args.rebin,
     )
     n_mocks = mock_matrix.shape[0]

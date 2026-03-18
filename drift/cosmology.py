@@ -132,3 +132,74 @@ class LinearPowerGrid:
                 f"Omega_m={self._om_range}."
             ) from exc
         return plin, f
+
+
+class OneLoopPowerGrid(LinearPowerGrid):
+    """Like LinearPowerGrid but also precomputes one-loop integrals on the grid.
+
+    Uses a coarser default grid (10×10) to limit initialisation time.
+    ``predict()`` returns ``(plin, f, loop_arrays)`` where ``loop_arrays`` is
+    a dict with keys 'p22', 'p13', 'I12', 'J12', 'I22', 'I2K', 'J22',
+    'p22_dt', 'p22_tt', 'p13_dt', 'p13_tt'.
+
+    Parameters
+    ----------
+    k : array_like, shape (nk,)
+    z : float
+    sigma8_range : tuple (min, max, n), default (0.6, 1.2, 10)
+    omega_m_range : tuple (min, max, n), default (0.2, 0.5, 10)
+    fixed_params : dict, optional
+    """
+
+    _LOOP_KEYS = ("p22", "p13", "I12", "J12", "I22", "I2K", "J22",
+                   "p22_dt", "p22_tt", "p13_dt", "p13_tt")
+
+    def __init__(self, k, z,
+                 sigma8_range=(0.6, 1.2, 10),
+                 omega_m_range=(0.2, 0.5, 10),
+                 fixed_params=None):
+        # Build plin/f grids via parent
+        super().__init__(k, z, sigma8_range, omega_m_range, fixed_params)
+
+        from .galaxy_models import _compute_loop_templates
+
+        k = np.asarray(k, dtype=float)
+        s8_vals = np.linspace(*sigma8_range)
+        om_vals = np.linspace(*omega_m_range)
+
+        loop_grids = {key: np.empty((len(s8_vals), len(om_vals), len(k)))
+                      for key in self._LOOP_KEYS}
+
+        for i, s8 in enumerate(s8_vals):
+            for j, om in enumerate(om_vals):
+                p = dict(fixed_params or {})
+                p.update({"sigma8": float(s8), "Omega_m": float(om)})
+                cosmo = get_cosmology(p)
+                def plin_func(kk, _cosmo=cosmo):
+                    return get_linear_power(_cosmo, np.asarray(kk, dtype=float), z)
+                loops = _compute_loop_templates(k, plin_func)
+                for key in self._LOOP_KEYS:
+                    loop_grids[key][i, j] = loops[key]
+
+        self._loop_interps = {
+            key: RegularGridInterpolator(
+                (s8_vals, om_vals), loop_grids[key], method="cubic",
+                bounds_error=True,
+            )
+            for key in self._LOOP_KEYS
+        }
+
+    def predict(self, sigma8: float, omega_m: float):
+        """Return (plin, f, loop_arrays) at the given cosmological parameters."""
+        plin, f = super().predict(sigma8, omega_m)
+        pt = np.array([[sigma8, omega_m]])
+        try:
+            loop_arrays = {key: self._loop_interps[key](pt)[0]
+                           for key in self._LOOP_KEYS}
+        except ValueError as exc:
+            raise ValueError(
+                f"Parameters (sigma8={sigma8}, Omega_m={omega_m}) are outside "
+                f"the grid bounds sigma8={self._s8_range}, "
+                f"Omega_m={self._om_range}."
+            ) from exc
+        return plin, f, loop_arrays

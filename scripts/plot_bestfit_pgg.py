@@ -19,7 +19,8 @@ import matplotlib.pyplot as plt
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from drift.cosmology import get_cosmology
-from drift.io import load_pgg_measurements, load_pgg_covariance_mocks, make_mock_covariance
+from drift.io import load_pgg_measurements, mock_covariance, diagonal_covariance
+from drift.synthetic import make_synthetic_pgg
 from inference_pgg import (
     _build_params, make_direct_theory_model,
     SPACE, MODEL_MODE, MEAS_PATH, COV_DIR, ELLS, Z, VARY_COSMO,
@@ -70,6 +71,21 @@ def main():
         default=VARY_COSMO,
         help="Chains include sigma8 and Omega_m as free parameters.",
     )
+    parser.add_argument(
+        "--synthetic",
+        action="store_true",
+        help="Plot against synthetic (noiseless) data vector instead of measurements from disk.",
+    )
+    parser.add_argument(
+        "--synthetic-mode",
+        choices=["tree_only", "eft_lite", "eft_full", "one_loop", "one_loop_matter_only"],
+        default=None,
+        metavar="MODE",
+        help=(
+            "Model mode used to generate synthetic data (default: same as MODEL_MODE). "
+            "Must match the mode used during inference."
+        ),
+    )
     args = parser.parse_args()
 
     param_names, _ = _build_params(MODEL_MODE, vary_cosmo=args.vary_cosmo)
@@ -85,8 +101,35 @@ def main():
     for name, val in zip(param_names, theta_bf):
         print(f"  {name}: {val:.4f}")
 
-    # Load measurements
-    k, poles = load_pgg_measurements(MEAS_PATH, ells=ELLS, rebin=args.rebin, kmin=args.kmin)
+    # Load measurements (or generate synthetic data)
+    cosmo = get_cosmology()
+    if args.synthetic:
+        synthetic_mode = args.synthetic_mode or MODEL_MODE
+        if synthetic_mode == "tree_only":
+            TRUE_PARAMS = {"b1": 2.0}
+        elif synthetic_mode == "eft_lite":
+            TRUE_PARAMS = {"b1": 2.0, "c0": 5.0}
+        elif synthetic_mode == "eft_full":
+            TRUE_PARAMS = {"b1": 2.0, "c0": 5.0, "s0": 100.0}
+        elif synthetic_mode in ("one_loop", "one_loop_matter_only"):
+            TRUE_PARAMS = {"b1": 2.0, "c0": 5.0, "c2": 2.0, "s0": 100.0, "b2": 0.5, "bs2": -0.5}
+        else:
+            TRUE_PARAMS = {"b1": 2.0, "c0": 5.0, "c2": 2.0, "s0": 100.0, "b2": 0.5, "bs2": -0.5}
+        k = np.linspace(0.01, 0.3, 30)
+        print(f"Generating synthetic P_gg data vector (mode={synthetic_mode}) ...")
+        data_y, _ = make_synthetic_pgg(
+            k, ells=ELLS, z=Z, space=SPACE, mode=synthetic_mode,
+            true_params=TRUE_PARAMS, cosmo=cosmo,
+        )
+        nk = len(k)
+        poles = {}
+        idx = 0
+        for ell in ELLS:
+            poles[ell] = data_y[idx:idx + nk]
+            idx += nk
+        print(f"  True parameters: {TRUE_PARAMS}")
+    else:
+        k, poles = load_pgg_measurements(MEAS_PATH, ells=ELLS, rebin=args.rebin, kmin=args.kmin)
 
     # Build kmax mask
     kmax_dict = {ell: 0.5 for ell in ELLS}
@@ -99,14 +142,17 @@ def main():
                 ell_str, val_str = item.split(":")
                 kmax_dict[int(ell_str)] = float(val_str)
 
-    # Load mock covariance for error bars
-    print(f"Loading covariance mocks from {COV_DIR} ...")
-    k_cov, mock_mat = load_pgg_covariance_mocks(
-        COV_DIR, ells=ELLS, rebin=args.rebin, kmin=args.kmin, kmax=float(k.max()),
-    )
+    # Covariance for error bars
     mask = np.concatenate([k <= kmax_dict[ell] for ell in ELLS])
-    cov, _ = make_mock_covariance(mock_mat, mask=mask, rescale=args.cov_rescale)
-    nk = len(k[k <= kmax_dict[ELLS[0]]])  # k-bins for first ell (used for indexing)
+    if args.synthetic:
+        data_y_masked = data_y[mask]
+        cov, _ = diagonal_covariance(data_y_masked, rescale=args.cov_rescale)
+    else:
+        print(f"Estimating covariance from mocks in {COV_DIR} ...")
+        cov, _ = mock_covariance(
+            COV_DIR, "pgg", ELLS, k_data=k, mask=mask,
+            rescale=args.cov_rescale, rebin=args.rebin,
+        )
 
     # Per-ell error bars from covariance diagonal
     errors = {}
@@ -116,9 +162,9 @@ def main():
         nk_ell = kmask_ell.sum()
         errors[ell] = np.sqrt(np.diag(cov)[idx:idx + nk_ell])
         idx += nk_ell
+        print(errors[ell])
 
     # Evaluate theory at best-fit
-    cosmo = get_cosmology()
     theory_fn = make_direct_theory_model(
         cosmo, k, ells=ELLS, mode=MODEL_MODE, vary_cosmo=args.vary_cosmo,
     )
@@ -147,17 +193,17 @@ def main():
         meas_plot = poles[ell][kmask_ell]
         err_plot = errors[ell]
 
+        data_label = "Synthetic" if args.synthetic else "Measurement"
         ax.errorbar(
             k_plot, k_plot * meas_plot,
             yerr=k_plot * err_plot,
             fmt="o", ms=3, color="C0", elinewidth=0.8, capsize=2, zorder=3,
-            label="Measurement",
+            label=data_label,
         )
         ax.plot(k_plot, k_plot * theory_bf[ell][kmask_ell], color="C1", label="Best-fit")
         ax.set_title(rf"$\ell = {ell}$")
         ax.set_xlabel(r"$k$ [$h$/Mpc]")
         ax.set_ylabel(rf"$k\,P_{{{ell}}}$" + r" [$({\rm Mpc}/h)^2$]")
-        ax.axhline(0, color="k", lw=0.5, ls="--")
         ax.legend(fontsize=8)
 
     fig.suptitle(

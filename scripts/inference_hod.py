@@ -19,7 +19,7 @@ from pocomc import Sampler, Prior
 
 from drift.cosmology import get_cosmology, LinearPowerGrid
 from drift.emulator import TemplateEmulator
-from drift.io import load_measurements, load_covariance_mocks, make_mock_covariance
+from drift.io import load_measurements, mock_covariance
 from inference_dsg import (
     _build_params, _build_data_mask, _parse_kmax,
     make_eft_theory_model, make_direct_theory_model,
@@ -160,11 +160,11 @@ def main():
     print("  done.")
     theory_fn_masked = lambda theta: theory_fn(theta)[mask]
     print(f"Estimating covariance from mocks in {COV_DIR} ...")
-    _, mock_matrix = load_covariance_mocks(COV_DIR, nquantiles=5, quantiles=QUANTILES, ells=ELLS, rebin=args.rebin)
-    cov, precision_matrix = make_mock_covariance(mock_matrix, mask=mask, rescale=args.cov_rescale)
-    n_mocks = mock_matrix.shape[0]
-    print(f"  {n_mocks} mocks, data vector length {mask.sum()} → Hartlap factor "
-          f"{(n_mocks - mask.sum() - 2) / (n_mocks - 1):.4f}")
+    cov, precision_matrix = mock_covariance(
+        COV_DIR, "ds", ELLS, mask=mask, rescale=args.cov_rescale,
+        rebin=args.rebin, nquantiles=5, quantiles=QUANTILES,
+    )
+    print(f"  Covariance matrix shape: {cov.shape}")
 
     # 5. Log-likelihood
     log_likelihood = make_log_likelihood(data_y_masked, precision_matrix, theory_fn_masked)

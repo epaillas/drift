@@ -10,7 +10,7 @@ import numpy as np
 
 from .cosmology import get_linear_power, get_growth_rate
 
-_VALID_MODES = ("tree_only", "eft_lite", "eft_full", "one_loop")
+_VALID_MODES = ("tree_only", "eft_lite", "eft_full", "one_loop", "one_loop_matter_only")
 _EMULATOR_UNSUPPORTED_MODES = ()
 
 # Analytic Legendre moments (same as emulator.py)
@@ -82,7 +82,7 @@ class GalaxyTemplateEmulator:
         self._T_k2Plin = k ** 2 * plin  # k^2 * P_lin
         self._T_k2 = k ** 2             # k^2 (stochastic shape)
 
-        if self.mode == "one_loop":
+        if self.mode in ("one_loop", "one_loop_matter_only"):
             from .galaxy_models import _compute_loop_templates
             def plin_func(kk):
                 return get_linear_power(cosmo, np.asarray(kk, dtype=float), self.z)
@@ -121,7 +121,7 @@ class GalaxyTemplateEmulator:
         self._T_Plin = plin
         self._T_k2Plin = self.k ** 2 * plin
         self.f = float(f)
-        if self.mode == "one_loop" and loop_arrays is not None:
+        if self.mode in ("one_loop", "one_loop_matter_only") and loop_arrays is not None:
             self._T_p22 = loop_arrays["p22"]
             self._T_p13 = loop_arrays["p13"]
             self._T_I12 = loop_arrays["I12"]
@@ -184,6 +184,15 @@ class GalaxyTemplateEmulator:
             cm4 = cm4 - 2.0 * (b1 * c4 + f * c2) * k2A
             cm6 = cm6 - 2.0 * f * c4 * k2A
 
+        # ---- One-loop matter-only corrections ----
+        if self.mode == "one_loop_matter_only":
+            p_loop_dd = b1 ** 2 * (self._T_p22 + self._T_p13)
+            cm0 = cm0 + p_loop_dd
+            P_dt_loop = self._T_p22_dt + self._T_p13_dt
+            P_tt_loop = self._T_p22_tt + self._T_p13_tt
+            cm2 = cm2 + 2.0 * b1 * f * P_dt_loop
+            cm4 = cm4 + f ** 2 * P_tt_loop
+
         # ---- One-loop corrections (one_loop mode) ----
         if self.mode == "one_loop":
             p_loop_dd = b1 ** 2 * (self._T_p22 + self._T_p13)
@@ -202,7 +211,7 @@ class GalaxyTemplateEmulator:
             cm4 = cm4 + f ** 2 * P_tt_loop
 
         # ---- Stochastic terms (eft_full and one_loop) ----
-        if self.mode in ("eft_full", "one_loop"):
+        if self.mode in ("eft_full", "one_loop", "one_loop_matter_only"):
             cm0 = cm0 + s0 + s2 * k2
 
         return M0 * cm0 + M2 * cm2 + M4 * cm4 + M6 * cm6

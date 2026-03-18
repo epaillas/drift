@@ -51,10 +51,11 @@ def test_P13_finite(k_arr, plin_func):
     assert np.all(np.isfinite(p13))
 
 
-def test_P13_negative_at_intermediate_k(plin_func):
-    k_mid = np.logspace(np.log10(0.05), np.log10(0.5), 10)
-    p13 = compute_P13(k_mid, plin_func, n_q=128)
-    assert np.all(p13 < 0), f"2P13 should be negative at intermediate k; got {p13}"
+def test_P13_negative_at_high_k(plin_func):
+    """Renormalized 2*P13 should be negative at sufficiently high k."""
+    k_high = np.logspace(np.log10(0.3), np.log10(0.5), 5)
+    p13 = compute_P13(k_high, plin_func, n_q=128)
+    assert np.all(p13 < 0), f"2P13 should be negative at high k; got {p13}"
 
 
 def test_P22_subdominant_at_low_k(loop_dict, k_arr):
@@ -86,20 +87,19 @@ def test_P22_scales_as_Plin_squared(k_arr, plin_func):
 
 
 def test_P13_not_over_normalized(loop_dict, k_arr):
-    """|2P13 / Plin| at low k must not be inflated by a factor-of-2 normalisation bug.
+    """|2P13 / Plin| at low k must be small after UV renormalization.
 
-    SPT P13 has a UV-sensitive piece proportional to Plin(k)*int q^2 Plin(q) dq
-    that is large at low k regardless of k (expected SPT behaviour). With the
-    correct 4*pi^2 prefactor the ratio is ~13-15 for this cosmology/grid; the
-    former buggy 2*pi^2 prefactor doubles it to ~27-30. A threshold of 20
-    distinguishes the two without being sensitive to cosmological parameters.
+    The EFT-renormalized P13 subtracts the UV-sensitive constant from the
+    angular kernel, so the ratio |2P13/Plin| should be << 1 at low k
+    (typically ~0.001–0.01). A threshold of 1.0 catches regressions where
+    the UV subtraction is accidentally removed.
     """
     k_low_mask = k_arr < 0.05
     if not np.any(k_low_mask):
         pytest.skip("No k < 0.05 in k_arr")
     ratio = np.abs(loop_dict["p13"][k_low_mask] / loop_dict["plin"][k_low_mask])
-    assert np.all(ratio < 20.0), (
-        f"|2P13/Plin| > 20 at low k — P13 may have a factor-of-2 over-normalisation: ratio = {ratio}"
+    assert np.all(ratio < 1.0), (
+        f"|2P13/Plin| > 1.0 at low k — UV renormalization may be broken: ratio = {ratio}"
     )
 
 
@@ -131,3 +131,11 @@ def test_P13_scales_linearly_with_Plin(k_arr, plin_func):
     ratio = p13_2x / p13_ref
     assert np.allclose(ratio, 4.0, rtol=1e-6), \
         f"P13 scaling ratio expected 4, got {ratio}"
+
+
+def test_P22_convergence_with_resolution(plin_func):
+    """P22 at different GL mu resolutions must converge (no aliasing spikes)."""
+    k_test = np.linspace(0.05, 0.2, 30)
+    p22_lo = compute_P22(k_test, plin_func, n_q=128, n_mu=64)
+    p22_hi = compute_P22(k_test, plin_func, n_q=128, n_mu=128)
+    np.testing.assert_allclose(p22_lo, p22_hi, rtol=0.05)

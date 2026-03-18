@@ -1,5 +1,6 @@
 """Save and load DRIFT predictions."""
 
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -117,23 +118,93 @@ def load_pgg_measurements(path, ells=(0, 2), rebin=13, kmin=0.0, kmax=np.inf) ->
     return k, poles
 
 
-def load_pgg_covariance_mocks(directory, ells=(0, 2), rebin=13, kmin=0.0, kmax=np.inf):
-    """Load all P_gg mock realizations from a directory for covariance estimation.
+def mock_covariance(mock_dir, statistic, ells, k_data=None, mask=None,
+                    rescale=1.0, rebin=13, **stat_kwargs):
+    """Load mocks from directory, compute sample covariance + Hartlap-corrected precision.
 
     Parameters
     ----------
-    directory : str or Path
+    mock_dir : path  — directory containing mock measurement files
+    statistic : str  — "pgg" or "ds"
     ells : tuple of int
-    rebin : int
-    kmin : float
-    kmax : float
+    k_data : np.ndarray, optional  — measurement k-grid; if the mock k-grid
+        differs, each mock is interpolated onto k_data before computing the
+        covariance (fixes k-grid mismatches).
+    mask : np.ndarray of bool, optional  — subset the data vector
+    rescale : float  — divide covariance by this factor (default 1.0)
+    rebin : int  — rebinning factor for mock loading
+    **stat_kwargs : forwarded to statistic-specific loader
+        For "ds": nquantiles (int), quantiles (tuple of int)
 
     Returns
     -------
-    k : np.ndarray  shape (nk,)
-    mock_matrix : np.ndarray  shape (n_mocks, n_ells * nk)
-        Row order: for ell in ells, k-values.
+    cov : np.ndarray  shape (n_data, n_data)
+    precision : np.ndarray  shape (n_data, n_data)
     """
+    cache_hash = _mock_cache_key(statistic, ells, rebin, **stat_kwargs)
+    cache_path = Path(mock_dir) / f".mock_cache_{cache_hash}.npz"
+
+    if cache_path.exists():
+        cached = np.load(cache_path)
+        k_mock, mock_matrix = cached["k"], cached["mock_matrix"]
+    elif statistic == "pgg":
+        k_mock, mock_matrix = _load_pgg_mocks(mock_dir, ells=ells, rebin=rebin,
+                                               kmin=stat_kwargs.get("kmin", 0.0),
+                                               kmax=stat_kwargs.get("kmax", np.inf))
+        np.savez(cache_path, k=k_mock, mock_matrix=mock_matrix)
+    elif statistic == "ds":
+        k_mock, mock_matrix = _load_ds_mocks(mock_dir, ells=ells, rebin=rebin,
+                                              nquantiles=stat_kwargs.get("nquantiles", 5),
+                                              quantiles=stat_kwargs.get("quantiles"))
+        np.savez(cache_path, k=k_mock, mock_matrix=mock_matrix)
+    else:
+        raise ValueError(f"Unknown statistic: {statistic!r}. Expected 'pgg' or 'ds'.")
+
+    # Interpolate mock data vectors onto measurement k-grid if they differ
+    if k_data is not None and not np.array_equal(k_mock, k_data):
+        n_mocks = mock_matrix.shape[0]
+        nk_mock, nk_data = len(k_mock), len(k_data)
+        n_blocks = mock_matrix.shape[1] // nk_mock
+        interp = np.empty((n_mocks, n_blocks * nk_data))
+        for b in range(n_blocks):
+            src = mock_matrix[:, b * nk_mock:(b + 1) * nk_mock]
+            for i in range(n_mocks):
+                interp[i, b * nk_data:(b + 1) * nk_data] = np.interp(k_data, k_mock, src[i])
+        mock_matrix = interp
+
+    return _compute_covariance(mock_matrix, mask=mask, rescale=rescale)
+
+
+def diagonal_covariance(data_y, noise_frac=0.05, floor=50.0, rescale=1.0):
+    """Diagonal covariance with fractional noise + absolute floor.
+
+    Returns
+    -------
+    cov : np.ndarray  shape (n, n)
+    precision : np.ndarray  shape (n, n)
+    """
+    var = (noise_frac * np.abs(data_y)) ** 2 + floor ** 2
+    cov = np.diag(var) / rescale
+    precision = np.diag(1.0 / (var / rescale))
+    return cov, precision
+
+
+def _mock_cache_key(statistic, ells, rebin, **stat_kwargs):
+    """Return a short hex hash identifying a unique mock-loading configuration."""
+    parts = [statistic, str(tuple(sorted(ells))), str(rebin)]
+    if statistic == "pgg":
+        parts.append(f"kmin={stat_kwargs.get('kmin', 0.0)}")
+        parts.append(f"kmax={stat_kwargs.get('kmax', np.inf)}")
+    elif statistic == "ds":
+        parts.append(f"nq={stat_kwargs.get('nquantiles', 5)}")
+        q = stat_kwargs.get('quantiles')
+        parts.append(f"q={tuple(q) if q is not None else None}")
+    key_str = "|".join(parts)
+    return hashlib.sha256(key_str.encode()).hexdigest()[:12]
+
+
+def _load_pgg_mocks(directory, ells=(0, 2), rebin=13, kmin=0.0, kmax=np.inf):
+    """Load P_gg mock files -> (k, mock_matrix)."""
     paths = sorted(Path(directory).glob("mesh2_spectrum_poles_ph*.h5"))
     rows = []
     k = None
@@ -146,27 +217,8 @@ def load_pgg_covariance_mocks(directory, ells=(0, 2), rebin=13, kmin=0.0, kmax=n
     return k, np.array(rows)
 
 
-def load_covariance_mocks(directory, nquantiles=5, quantiles=None, ells=(0, 2), rebin=5):
-    """Load all mock realizations from a directory for covariance estimation.
-
-    Parameters
-    ----------
-    directory : str or Path
-    nquantiles : int
-        Total number of quantiles in each file (used for loading).
-    quantiles : sequence of int, optional
-        Which quantile indices (1-based) to include in the output data vector.
-        Defaults to range(1, nquantiles + 1) — all quantiles.
-    ells : tuple of int
-    rebin : int
-
-    Returns
-    -------
-    k : np.ndarray  shape (nk,)
-    mock_matrix : np.ndarray  shape (n_mocks, len(quantiles) * n_ells * nk)
-        Row order matches the flat data vector built by inference scripts:
-        for q in quantiles, for ell in ells, k-values.
-    """
+def _load_ds_mocks(directory, nquantiles=5, quantiles=None, ells=(0, 2), rebin=5):
+    """Load DS mock files -> (k, mock_matrix)."""
     if quantiles is None:
         quantiles = range(1, nquantiles + 1)
     paths = sorted(Path(directory).glob("*.h5"))
@@ -185,28 +237,8 @@ def load_covariance_mocks(directory, nquantiles=5, quantiles=None, ells=(0, 2), 
     return k, np.array(rows)
 
 
-def make_mock_covariance(mock_matrix, mask=None, rescale=1.0):
-    """Compute the sample covariance matrix from mock realizations.
-
-    Applies the Hartlap (2007) correction to the precision matrix when
-    n_mocks > n_data + 2.  Raises ValueError if n_mocks <= n_data (singular).
-
-    Parameters
-    ----------
-    mock_matrix : np.ndarray  shape (n_mocks, n_data_full)
-    mask : np.ndarray of bool, optional
-        If provided, selects a subset of the data vector before computing
-        the covariance (must be applied consistently with inference).
-    rescale : float, optional
-        Divide the covariance by this factor before inverting (default: 1.0).
-        Equivalent to multiplying the precision matrix by rescale.
-
-    Returns
-    -------
-    cov : np.ndarray  shape (n_data, n_data)
-    precision : np.ndarray  shape (n_data, n_data)
-        Hartlap-corrected inverse covariance.
-    """
+def _compute_covariance(mock_matrix, mask=None, rescale=1.0):
+    """np.cov + Hartlap correction -> (cov, precision)."""
     vecs = mock_matrix[:, mask] if mask is not None else mock_matrix
     n_mocks, n_data = vecs.shape
     if n_mocks <= n_data:

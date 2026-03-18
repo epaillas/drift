@@ -18,7 +18,7 @@ from pocomc import Sampler, Prior
 
 from drift.cosmology import get_cosmology, LinearPowerGrid
 from drift.emulator import TemplateEmulator
-from drift.io import load_measurements
+from drift.io import load_measurements, diagonal_covariance
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -222,15 +222,6 @@ def make_direct_theory_model(cosmo, k, ells, quantiles, ds_model, mode,
 
 
 # ---------------------------------------------------------------------------
-# Covariance
-# ---------------------------------------------------------------------------
-def make_diagonal_cov(data_y, noise_frac=0.05, floor=50.0):
-    """Diagonal covariance: fractional relative noise with absolute floor."""
-    var = (noise_frac * np.abs(data_y)) ** 2 + floor ** 2
-    return np.diag(var)
-
-
-# ---------------------------------------------------------------------------
 # Log-likelihood
 # ---------------------------------------------------------------------------
 def make_log_likelihood(data_y, precision_matrix, theory_fn):
@@ -344,8 +335,7 @@ def main():
         )
     print("  done.")
     theory_fn_masked = lambda theta: theory_fn(theta)[mask]
-    cov = make_diagonal_cov(data_y_masked) / args.cov_rescale
-    precision_matrix = np.linalg.inv(cov)
+    cov, precision_matrix = diagonal_covariance(data_y_masked, rescale=args.cov_rescale)
 
     # 5. Log-likelihood
     log_likelihood = make_log_likelihood(data_y_masked, precision_matrix, theory_fn_masked)

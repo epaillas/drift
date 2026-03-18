@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from drift.cosmology import get_cosmology
-from drift.io import load_measurements, load_covariance_mocks, make_mock_covariance
+from drift.io import load_measurements, mock_covariance
 from inference_dsg import _parse_kmax, _build_data_mask, make_direct_theory_model, ELLS, Z, R, KERNEL, SPACE
 from plot_bestfit_dsg import _build_params
 
@@ -111,8 +111,10 @@ def main():
     mask = mask & kmin_mask
 
     # Compute per-bin uncertainties from mock covariance diagonal
-    _, mock_matrix = load_covariance_mocks(COV_DIR, nquantiles=5, quantiles=QUANTILES, ells=ELLS, rebin=args.rebin)
-    cov_masked, _ = make_mock_covariance(mock_matrix, mask=mask, rescale=args.cov_rescale)
+    cov_masked, _ = mock_covariance(
+        COV_DIR, "ds", ELLS, mask=mask, rescale=args.cov_rescale,
+        rebin=args.rebin, nquantiles=5, quantiles=QUANTILES,
+    )
     err_masked = np.sqrt(np.diag(cov_masked))
 
     # Scatter masked errors back into full-length arrays so the plot loop can

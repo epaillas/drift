@@ -6,7 +6,7 @@ from .cosmology import get_linear_power, get_growth_rate
 from .eft_bias import GalaxyEFTParams
 from .one_loop import compute_P22, compute_P13, compute_bias_loops, compute_Pdt_Ptt
 
-_VALID_MODES = ("tree_only", "eft_lite", "eft_full", "one_loop")
+_VALID_MODES = ("tree_only", "eft_lite", "eft_full", "one_loop", "one_loop_matter_only")
 
 
 def _compute_loop_templates(k, plin_func):
@@ -111,9 +111,16 @@ def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_lite"):
             )
             P_real = b1 ** 2 * (plin + loops["p22"] + loops["p13"]) + p_loop_bias
             P = P_real[:, np.newaxis] * np.ones((1, len(mu)))
+        elif mode == "one_loop_matter_only":
+            def plin_func(kk):
+                return get_linear_power(cosmo, np.asarray(kk, dtype=float), z)
+
+            loops = _compute_loop_templates(k, plin_func)
+            P_real = b1 ** 2 * (plin + loops["p22"] + loops["p13"])
+            P = P_real[:, np.newaxis] * np.ones((1, len(mu)))
         else:
             P = (b1 ** 2 * plin)[:, np.newaxis] * np.ones((1, len(mu)))
-        if mode in ("eft_full", "one_loop"):
+        if mode in ("eft_full", "one_loop", "one_loop_matter_only"):
             P = P + (gal_params.s0 + gal_params.s2 * k ** 2)[:, np.newaxis]
         return P
 
@@ -125,7 +132,7 @@ def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_lite"):
     kaiser = b1 + f * mu ** 2   # (nmu,)
     P = plin[:, np.newaxis] * kaiser[np.newaxis, :] ** 2
 
-    if mode in ("eft_lite", "eft_full"):
+    if mode in ("eft_lite", "eft_full", "one_loop_matter_only"):
         c0 = gal_params.c0
         c2 = gal_params.c2
         c4 = gal_params.c4
@@ -135,8 +142,25 @@ def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_lite"):
         )[:, np.newaxis] * ct_shape[np.newaxis, :] * kaiser[np.newaxis, :]
         P = P + counterterm
 
-    if mode == "eft_full":
+    if mode in ("eft_full", "one_loop_matter_only"):
         P = P + (gal_params.s0 + gal_params.s2 * k ** 2)[:, np.newaxis]
+
+    if mode == "one_loop_matter_only":
+        def plin_func(kk):
+            return get_linear_power(cosmo, np.asarray(kk, dtype=float), z)
+
+        loops = _compute_loop_templates(k, plin_func)
+        p22, p13 = loops["p22"], loops["p13"]
+        p22_dt, p22_tt = loops["p22_dt"], loops["p22_tt"]
+        p13_dt, p13_tt = loops["p13_dt"], loops["p13_tt"]
+
+        # Matter loops only — no bias loops
+        P_dd_loop = b1 ** 2 * (p22 + p13)
+        P_dt_loop = p22_dt + p13_dt
+        P_tt_loop = p22_tt + p13_tt
+        P = P + P_dd_loop[:, np.newaxis]
+        P = P + (2.0 * b1 * f) * mu[np.newaxis, :] ** 2 * P_dt_loop[:, np.newaxis]
+        P = P + f ** 2 * mu[np.newaxis, :] ** 4 * P_tt_loop[:, np.newaxis]
 
     if mode == "one_loop":
         b2  = gal_params.b2

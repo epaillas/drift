@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from drift.cosmology import get_cosmology
-from drift.io import load_measurements
+from drift.io import load_measurements, diagonal_covariance
 from inference_dsg import _parse_kmax, _build_data_mask, make_direct_theory_model
 
 SPACE      = "redshift"         # "redshift" | "real"
@@ -36,8 +36,6 @@ OUTPUT_DIR  = CHAINS_PATH.parent
 Z           = 0.5
 R           = 10.0
 KERNEL      = "gaussian"
-NOISE_FRAC  = 0.05
-NOISE_FLOOR = 50.0
 ELLS      = (0, 2)
 QUANTILES = (1, 2, 4, 5)
 
@@ -131,13 +129,22 @@ def main():
     kmax_dict = _parse_kmax(args.kmax, ELLS)
 
     # Compute per-bin uncertainties from the same diagonal covariance as inference
+    data_y = np.concatenate([
+        measured[f"DS{q}"][ell]
+        for q in QUANTILES
+        for ell in ELLS
+    ])
+    cov_full, _ = diagonal_covariance(data_y, rescale=args.cov_rescale)
+    err_full_vec = np.sqrt(np.diag(cov_full))
+
     errors = {}
+    idx = 0
     for q in QUANTILES:
         label = f"DS{q}"
         errors[label] = {}
         for ell in ELLS:
-            p = measured[label][ell]
-            errors[label][ell] = np.sqrt((NOISE_FRAC * np.abs(p)) ** 2 + NOISE_FLOOR ** 2) / np.sqrt(args.cov_rescale)
+            errors[label][ell] = err_full_vec[idx:idx + len(k)]
+            idx += len(k)
 
     # Evaluate theory at best-fit
     cosmo = get_cosmology()

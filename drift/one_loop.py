@@ -29,13 +29,13 @@ def F2_kernel(k1: float, k2: float, cos_theta: float) -> float:
 def _I13_angular(k_val: float, q_arr: np.ndarray) -> np.ndarray:
     """Analytic angular integral over the symmetrized F3 kernel for P13.
 
-    Implements the standard result (Bernardeau et al. 2002, eq. A17):
-
-        I13(k, q) = 1/252 * [12/x^2 - 158 + 100*x^2 - 42*x^4
-                             + 3/x^3 * (x^2-1)^3 * (7*x^2+2) * ln|(1+x)/(1-x)|]
-
-    where x = q / k. A Taylor expansion around x -> 1 (q -> k) is used
-    when |x - 1| < 1e-6 to avoid the log singularity.
+    Implements the *EFT-renormalized* version of the standard result
+    (Bernardeau et al. 2002, eq. A17).  The raw kernel approaches
+    -122/315 as x = q/k -> infinity, generating a UV-sensitive
+    contribution proportional to P_lin(k) that is absorbed by
+    renormalization of the linear bias b1.  We subtract this constant
+    so that the loop integral yields the finite, scale-dependent
+    one-loop correction only.
 
     Parameters
     ----------
@@ -51,20 +51,29 @@ def _I13_angular(k_val: float, q_arr: np.ndarray) -> np.ndarray:
     x = q_arr / k_val
     result = np.zeros_like(x)
 
-    regular = np.abs(x - 1.0) >= 1e-6
+    near_one = np.abs(x - 1.0) < 1e-6
+    large_x = x > 50.0
+    regular = ~near_one & ~large_x
 
-    # Regular evaluation
+    # Regular evaluation (subtract UV constant via modified polynomial)
     xr = x[regular]
-    term_poly = 12.0 / xr**2 - 158.0 + 100.0 * xr**2 - 42.0 * xr**4
+    # Original poly: 12/x^2 - 158 + 100*x^2 - 42*x^4
+    # Add 252 * 122/315 = 488/5 = 97.6 to subtract the UV asymptotic
+    term_poly = 12.0 / xr**2 - 302.0 / 5.0 + 100.0 * xr**2 - 42.0 * xr**4
     log_arg = np.abs((1.0 + xr) / (1.0 - xr))
     term_log = (3.0 / xr**3) * (xr**2 - 1.0)**3 * (7.0 * xr**2 + 2.0) * np.log(log_arg)
     result[regular] = (term_poly + term_log) / 252.0
 
-    # Taylor expansion around x = 1 (q -> k): result ~ -16/21 + higher
-    xs = x[~regular]
+    # Taylor expansion around x = 1 (q -> k)
+    xs = x[near_one]
     dx = xs - 1.0
-    # Leading terms of the Taylor series around x=1
-    result[~regular] = -16.0 / 21.0 + (16.0 / 7.0) * dx - (4.0 / 7.0) * dx**2
+    # Renormalized leading term: -16/21 + 122/315 = -118/315
+    result[near_one] = -118.0 / 315.0 + (16.0 / 7.0) * dx - (4.0 / 7.0) * dx**2
+
+    # Asymptotic expansion for large x (avoids catastrophic cancellation)
+    # I13_reg(x) = (96/(5*x^2) - 160/(21*x^4) + ...) / 252
+    xl = x[large_x]
+    result[large_x] = (96.0 / (5.0 * xl**2) - 160.0 / (21.0 * xl**4)) / 252.0
 
     return result
 
@@ -93,7 +102,7 @@ def compute_P22(
     n_q : int
         Number of log-spaced q points.
     n_mu : int
-        Number of linear mu_q points in [-1, 1].
+        Number of Gauss-Legendre quadrature points in [-1, 1].
 
     Returns
     -------
@@ -101,7 +110,7 @@ def compute_P22(
     """
     k = np.asarray(k, dtype=float)
     q_arr = np.geomspace(q_min, q_max, n_q)         # (nq,)
-    mu_arr = np.linspace(-1.0, 1.0, n_mu)           # (nmu,)
+    mu_arr, mu_weights = np.polynomial.legendre.leggauss(n_mu)  # (nmu,)
     ln_q = np.log(q_arr)
 
     plin_q = plin_func(q_arr)                        # (nq,)
@@ -136,8 +145,8 @@ def compute_P22(
         # Integrand: 2 * q^3 * plin(q) * plin(k2) * F2^2  (in ln q space)
         integrand = 2.0 * q2d**3 * plin_q[:, np.newaxis] * plin_k2 * f2**2
 
-        # Integrate over mu first (trapezoidal), then over ln q
-        mu_integral = np.trapz(integrand, mu_arr, axis=1)   # (nq,)
+        # Integrate over mu first (Gauss-Legendre), then over ln q
+        mu_integral = integrand @ mu_weights                 # (nq,)
         result[i] = np.trapz(mu_integral, ln_q)
 
     # Prefactor: azimuthal integral of d^3q/(2pi)^3 gives 2pi/(2pi)^3 = 1/(2pi)^2 = 1/(4pi^2).
@@ -210,11 +219,9 @@ def _G2_spt(k1: float, k2: float, cos_theta: float) -> float:
 def _I13_G_angular(k_val: float, q_arr: np.ndarray) -> np.ndarray:
     """Analytic angular integral over the symmetrized G3 kernel for P13_tt.
 
-    I13_G(k, q) = (1/504) * [12/x^2 - 82 + 4*x^2 - 6*x^4
-                              + (3/x^3)*(x^2-1)^3*(x^2+2) * ln|(1+x)/(1-x)|]
-
-    where x = q/k. A Taylor expansion around x -> 1 (q -> k) is used
-    when |x - 1| < 1e-6 to avoid the log singularity.
+    EFT-renormalized: the raw kernel approaches -1/5 as x -> infinity.
+    This UV constant is subtracted so that the loop integral yields
+    only the finite, scale-dependent correction.
 
     Parameters
     ----------
@@ -230,19 +237,30 @@ def _I13_G_angular(k_val: float, q_arr: np.ndarray) -> np.ndarray:
     x = q_arr / k_val
     result = np.zeros_like(x)
 
-    regular = np.abs(x - 1.0) >= 1e-6
+    near_one = np.abs(x - 1.0) < 1e-6
+    large_x = x > 50.0
+    regular = ~near_one & ~large_x
 
-    # Regular evaluation
+    # Regular evaluation (subtract UV constant via modified polynomial)
     xr = x[regular]
-    term_poly = 12.0 / xr ** 2 - 82.0 + 4.0 * xr ** 2 - 6.0 * xr ** 4
+    # Original poly: 12/x^2 - 82 + 4*x^2 - 6*x^4
+    # Add 504 * 1/5 = 100.8 to subtract the UV asymptotic
+    term_poly = 12.0 / xr ** 2 + 18.8 + 4.0 * xr ** 2 - 6.0 * xr ** 4
     log_arg = np.abs((1.0 + xr) / (1.0 - xr))
     term_log = (3.0 / xr ** 3) * (xr ** 2 - 1.0) ** 3 * (xr ** 2 + 2.0) * np.log(log_arg)
     result[regular] = (term_poly + term_log) / 504.0
 
-    # Taylor expansion around x = 1 (log term vanishes; polynomial dominates)
-    xs = x[~regular]
+    # Taylor expansion around x = 1
+    xs = x[~near_one & ~large_x]  # not used; near_one handled below
+    xs = x[near_one]
     dx = xs - 1.0
-    result[~regular] = (-72.0 - 40.0 * dx + 4.0 * dx ** 2) / 504.0
+    # Renormalized leading term: -72/504 + 1/5 = -1/7 + 1/5 = 2/35
+    result[near_one] = (28.8 - 40.0 * dx + 4.0 * dx ** 2) / 504.0
+
+    # Asymptotic expansion for large x
+    # I13_G_reg(x) = (1248/(35*x^2) - 608/(105*x^4) + ...) / 504
+    xl = x[large_x]
+    result[large_x] = (1248.0 / (35.0 * xl**2) - 608.0 / (105.0 * xl**4)) / 504.0
 
     return result
 
@@ -289,7 +307,7 @@ def compute_Pdt_Ptt(
     """
     k = np.asarray(k, dtype=float)
     q_arr = np.geomspace(q_min, q_max, n_q)
-    mu_arr = np.linspace(-1.0, 1.0, n_mu)
+    mu_arr, mu_weights = np.polynomial.legendre.leggauss(n_mu)
     ln_q = np.log(q_arr)
 
     plin_q = plin_func(q_arr)
@@ -326,7 +344,7 @@ def compute_Pdt_Ptt(
         ig_tt = 2.0 * base * g2s ** 2
 
         def _integrate(ig):
-            mu_int = np.trapz(ig, mu_arr, axis=1)
+            mu_int = ig @ mu_weights
             return np.trapz(mu_int, ln_q)
 
         p22_dt[i] = _integrate(ig_dt)
@@ -394,7 +412,7 @@ def compute_bias_loops(
     Integrals returned
     ------------------
     I12 : kernel = F2(q, k-q, cos12)          [b1 × b2 cross]
-    J12 : kernel = G2(cos12)                  [b1 × bs2 cross]
+    J12 : kernel = F2(q, k-q, cos12) * G2(cos12)  [b1 × bs2 cross]
     I22 : kernel = 1/2                        [b2^2 auto, trivial]
     I2K : kernel = G2(cos12) / 2              [b2 × bs2 cross]
     J22 : kernel = G2(cos12)^2 / 2            [bs2^2 auto]
@@ -410,7 +428,7 @@ def compute_bias_loops(
     n_q : int
         Number of log-spaced q points.
     n_mu : int
-        Number of linear mu_q points in [-1, 1].
+        Number of Gauss-Legendre quadrature points in [-1, 1].
 
     Returns
     -------
@@ -418,7 +436,7 @@ def compute_bias_loops(
     """
     k = np.asarray(k, dtype=float)
     q_arr = np.geomspace(q_min, q_max, n_q)      # (nq,)
-    mu_arr = np.linspace(-1.0, 1.0, n_mu)         # (nmu,)
+    mu_arr, mu_weights = np.polynomial.legendre.leggauss(n_mu)  # (nmu,)
     ln_q = np.log(q_arr)
 
     plin_q = plin_func(q_arr)                      # (nq,)
@@ -456,14 +474,14 @@ def compute_bias_loops(
         base = q2d ** 3 * plin_q[:, np.newaxis] * plin_k2    # (nq, nmu)
 
         # Accumulate five integrands
-        ig_I12 = 2.0 * base * f2
-        ig_J12 = 2.0 * base * g2
-        ig_I22 = base * 1.0                                    # kernel = 1/2, factor 2 cancels
-        ig_I2K = base * g2                                     # kernel = g2/2, factor 2 cancels
-        ig_J22 = base * g2 ** 2                                # kernel = g2^2/2, factor 2 cancels
+        ig_I12 = base * f2                                      # kernel = F2
+        ig_J12 = base * f2 * g2                                 # kernel = F2 * G2
+        ig_I22 = 0.5 * base                                     # kernel = 1/2
+        ig_I2K = 0.5 * base * g2                                # kernel = G2 / 2
+        ig_J22 = 0.5 * base * g2 ** 2                           # kernel = G2^2 / 2
 
         def _integrate(ig):
-            mu_int = np.trapz(ig, mu_arr, axis=1)             # (nq,)
+            mu_int = ig @ mu_weights                           # (nq,)
             return np.trapz(mu_int, ln_q)
 
         I12[i] = _integrate(ig_I12)

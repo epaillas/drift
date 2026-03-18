@@ -15,18 +15,19 @@ from scipy.stats import uniform as sp_uniform
 import pocomc
 from pocomc import Sampler, Prior
 
-from drift.cosmology import get_cosmology, LinearPowerGrid
+from drift.cosmology import get_cosmology, LinearPowerGrid, OneLoopPowerGrid
 from drift.galaxy_emulator import GalaxyTemplateEmulator
-from drift.io import load_pgg_measurements, load_pgg_covariance_mocks, make_mock_covariance
+from drift.io import load_pgg_measurements, mock_covariance, diagonal_covariance
+from drift.synthetic import make_synthetic_pgg
 
 # Import shared utilities from inference_dsg
-from inference_dsg import make_diagonal_cov, make_log_likelihood
+from inference_dsg import make_log_likelihood
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 SPACE      = "redshift"  # "redshift" | "real"
-MODEL_MODE = "eft_full"  # "tree_only" | "eft_lite" | "eft_full" | "one_loop"
+MODEL_MODE = "one_loop"  # "tree_only" | "eft_lite" | "eft_full" | "one_loop"
 
 MEAS_PATH  = Path(__file__).parents[1] / "outputs" / "hods" / "mesh2_spectrum_poles_c000_hod006.h5"
 COV_DIR    = Path(__file__).parents[1] / "outputs" / "hods" / "for_covariance"
@@ -56,12 +57,15 @@ def _build_params(model_mode, vary_cosmo=False):
         param_names = ["b1"]
         bounds = np.array([[0.5, 4.0]])
 
-    if model_mode in ("eft_lite", "eft_full", "one_loop"):
+    if model_mode in ("eft_lite", "eft_full", "one_loop", "one_loop_matter_only"):
         param_names += ["c0"]
         bounds = np.vstack([bounds, [[-50.0, 50.0]]])
-    if model_mode in ("eft_full", "one_loop"):
+    if model_mode in ("eft_full", "one_loop", "one_loop_matter_only"):
         param_names += ["s0"]
         bounds = np.vstack([bounds, [[-5000.0, 5000.0]]])
+    if model_mode in ("one_loop", "one_loop_matter_only"):
+        param_names += ["c2"]
+        bounds = np.vstack([bounds, [[-50.0, 50.0]]])
     if model_mode == "one_loop":
         param_names += ["b2", "bs2"]
         bounds = np.vstack([bounds, [[-4.0, 4.0], [-4.0, 4.0]]])
@@ -83,24 +87,21 @@ def _unpack_theta(theta, mode, vary_cosmo=False):
         sigma8  = float(theta[idx]); idx += 1
         omega_m = float(theta[idx]); idx += 1
     b1 = float(theta[idx]); idx += 1
-    c0, s0, b2, bs2 = 0.0, 0.0, 0.0, 0.0
-    if mode in ("eft_lite", "eft_full", "one_loop"):
+    c0, c2, s0, b2, bs2 = 0.0, 0.0, 0.0, 0.0, 0.0
+    if mode in ("eft_lite", "eft_full", "one_loop", "one_loop_matter_only"):
         c0 = float(theta[idx]); idx += 1
-    if mode in ("eft_full", "one_loop"):
+    if mode in ("eft_full", "one_loop", "one_loop_matter_only"):
         s0 = float(theta[idx]); idx += 1
+    if mode in ("one_loop", "one_loop_matter_only"):
+        c2  = float(theta[idx]); idx += 1
     if mode == "one_loop":
         b2  = float(theta[idx]); idx += 1
         bs2 = float(theta[idx]); idx += 1
-    return dict(b1=b1, c0=c0, s0=s0, b2=b2, bs2=bs2, sigma8=sigma8, omega_m=omega_m)
+    return dict(b1=b1, c0=c0, c2=c2, s0=s0, b2=b2, bs2=bs2, sigma8=sigma8, omega_m=omega_m)
 
 
 def make_eft_theory_model(cosmo, k, ells, mode, cosmo_grid=None):
     """Return a callable theta -> flat_data_vector using GalaxyTemplateEmulator."""
-    if mode == "one_loop":
-        raise ValueError(
-            "mode='one_loop' is not supported by the template emulator. "
-            "Pass --no-emulator to use direct GL quadrature."
-        )
     vary_cosmo = cosmo_grid is not None
     emulator = GalaxyTemplateEmulator(
         cosmo, k, ells=ells, z=Z, space=SPACE, mode=mode,
@@ -109,9 +110,14 @@ def make_eft_theory_model(cosmo, k, ells, mode, cosmo_grid=None):
     def theory(theta):
         p = _unpack_theta(theta, mode, vary_cosmo=vary_cosmo)
         if vary_cosmo:
-            plin, f = cosmo_grid.predict(p["sigma8"], p["omega_m"])
-            emulator.update_cosmology(plin, f)
-        params = {"b1": p["b1"], "c0": p["c0"], "s0": p["s0"]}
+            if mode in ("one_loop", "one_loop_matter_only"):
+                plin, f, loop_arrays = cosmo_grid.predict(p["sigma8"], p["omega_m"])
+                emulator.update_cosmology(plin, f, loop_arrays=loop_arrays)
+            else:
+                plin, f = cosmo_grid.predict(p["sigma8"], p["omega_m"])
+                emulator.update_cosmology(plin, f)
+        params = {"b1": p["b1"], "c0": p["c0"], "c2": p["c2"], "s0": p["s0"],
+                  "b2": p.get("b2", 0.0), "bs2": p.get("bs2", 0.0)}
         return emulator.predict(params)
 
     return theory
@@ -130,7 +136,7 @@ def make_direct_theory_model(cosmo, k, ells, mode, vary_cosmo=False):
             if vary_cosmo else cosmo
         )
         gal = GalaxyEFTParams(
-            b1=p["b1"], c0=p["c0"], s0=p["s0"],
+            b1=p["b1"], c0=p["c0"], c2=p["c2"], s0=p["s0"],
             b2=p.get("b2", 0.0), bs2=p.get("bs2", 0.0),
         )
 
@@ -187,6 +193,21 @@ def main():
         help="Minimum k to include in the fit (default: 0.01).",
     )
     parser.add_argument(
+        "--synthetic",
+        action="store_true",
+        help="Use a synthetic (noiseless) data vector instead of measurements from disk.",
+    )
+    parser.add_argument(
+        "--synthetic-mode",
+        choices=["tree_only", "eft_lite", "eft_full", "one_loop", "one_loop_matter_only"],
+        default=None,
+        metavar="MODE",
+        help=(
+            "Model mode used to generate synthetic data (default: same as MODEL_MODE). "
+            "Allows cross-mode tests, e.g. generate with tree_only, fit with one_loop."
+        ),
+    )
+    parser.add_argument(
         "--diag-cov",
         action="store_true",
         help="Use diagonal covariance instead of mock covariance.",
@@ -207,13 +228,38 @@ def main():
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # 1. Load measurements
-    print(f"Loading measurements from {MEAS_PATH} ...")
-    k, poles = load_pgg_measurements(MEAS_PATH, ells=ELLS, rebin=args.rebin, kmin=args.kmin)
-    print(f"  k range: [{k.min():.4f}, {k.max():.4f}] h/Mpc  ({len(k)} bins)")
+    # 1. Load measurements (or generate synthetic data)
+    if args.synthetic:
+        synthetic_mode = args.synthetic_mode or MODEL_MODE
+        # True parameters depend on the synthetic mode:
+        # simpler modes only need b1; extra params are zero by definition.
+        if synthetic_mode == "tree_only":
+            TRUE_PARAMS = {"b1": 2.0}
+        elif synthetic_mode == "eft_lite":
+            TRUE_PARAMS = {"b1": 2.0, "c0": 5.0}
+        elif synthetic_mode == "eft_full":
+            TRUE_PARAMS = {"b1": 2.0, "c0": 5.0, "s0": 100.0}
+        elif synthetic_mode in ("one_loop", "one_loop_matter_only"):
+            TRUE_PARAMS = {"b1": 2.0, "c0": 5.0, "c2": 2.0, "s0": 100.0, "b2": 0.5, "bs2": -0.5}
+        else:
+            TRUE_PARAMS = {"b1": 2.0, "c0": 5.0, "c2": 2.0, "s0": 100.0, "b2": 0.5, "bs2": -0.5}
+        k = np.linspace(0.01, 0.3, 30)
+        cosmo = get_cosmology()
+        print(f"Generating synthetic P_gg data vector (mode={synthetic_mode}) ...")
+        print(f"  True parameters: {TRUE_PARAMS}")
+        data_y, _ = make_synthetic_pgg(
+            k, ells=ELLS, z=Z, space=SPACE, mode=synthetic_mode,
+            true_params=TRUE_PARAMS, cosmo=cosmo,
+        )
+        print(f"  k range: [{k.min():.4f}, {k.max():.4f}] h/Mpc  ({len(k)} bins)")
+        print(f"  Data vector length: {len(data_y)}")
+    else:
+        print(f"Loading measurements from {MEAS_PATH} ...")
+        k, poles = load_pgg_measurements(MEAS_PATH, ells=ELLS, rebin=args.rebin, kmin=args.kmin)
+        print(f"  k range: [{k.min():.4f}, {k.max():.4f}] h/Mpc  ({len(k)} bins)")
 
-    data_y = np.concatenate([poles[ell] for ell in ELLS])
-    print(f"  Data vector length: {len(data_y)}")
+        data_y = np.concatenate([poles[ell] for ell in ELLS])
+        print(f"  Data vector length: {len(data_y)}")
 
     # Apply per-ell kmax masking
     kmax_dict = {ell: 0.5 for ell in ELLS}
@@ -230,15 +276,20 @@ def main():
     data_y_masked = data_y[mask]
     print(f"  Masked data vector length: {len(data_y_masked)}")
 
-    # 2. Cosmology
-    cosmo = get_cosmology()
+    # 2. Cosmology (may already be set in synthetic branch)
+    if not args.synthetic:
+        cosmo = get_cosmology()
 
     # 3. Theory model
     print(f"  EFT mode: {MODEL_MODE},  space: {SPACE}")
     cosmo_grid = None
     if vary_cosmo and not args.no_emulator:
-        print("Precomputing LinearPowerGrid (sigma8 × Omega_m) ...")
-        cosmo_grid = LinearPowerGrid(k, z=Z)
+        if MODEL_MODE in ("one_loop", "one_loop_matter_only"):
+            print("Precomputing OneLoopPowerGrid (sigma8 × Omega_m) ...")
+            cosmo_grid = OneLoopPowerGrid(k, z=Z)
+        else:
+            print("Precomputing LinearPowerGrid (sigma8 × Omega_m) ...")
+            cosmo_grid = LinearPowerGrid(k, z=Z)
         print("  done.")
 
     if args.no_emulator:
@@ -255,16 +306,15 @@ def main():
 
     theory_fn_masked = lambda theta: theory_fn(theta)[mask]
 
-    if args.diag_cov:
-        cov = make_diagonal_cov(data_y_masked) / args.cov_rescale
-        precision_matrix = np.linalg.inv(cov)
+    if args.diag_cov or args.synthetic:
+        cov, precision_matrix = diagonal_covariance(data_y_masked, rescale=args.cov_rescale)
     else:
-        print(f"Loading covariance mocks from {COV_DIR} ...")
-        k_cov, mock_mat = load_pgg_covariance_mocks(
-            COV_DIR, ells=ELLS, rebin=args.rebin, kmin=args.kmin, kmax=float(k.max()),
+        print(f"Estimating covariance from mocks in {COV_DIR} ...")
+        cov, precision_matrix = mock_covariance(
+            COV_DIR, "pgg", ELLS, k_data=k, mask=mask,
+            rescale=args.cov_rescale, rebin=args.rebin,
         )
-        cov, precision_matrix = make_mock_covariance(mock_mat, mask=mask, rescale=args.cov_rescale)
-        print(f"  Covariance matrix shape: {cov.shape}  ({mock_mat.shape[0]} mocks)")
+        print(f"  Covariance matrix shape: {cov.shape}")
 
     # 4. Log-likelihood
     log_likelihood = make_log_likelihood(data_y_masked, precision_matrix, theory_fn_masked)
@@ -299,13 +349,22 @@ def main():
     print(f"\nChains saved to {chains_path}")
 
     # 8. Print summary
+    if args.synthetic:
+        print(f"\nTrue parameters: {TRUE_PARAMS}")
     print("\nParameter estimates (posterior mean ± std):")
-    print(f"  {'name':>8}  {'mean':>8}  {'std':>8}")
+    header = f"  {'name':>8}  {'mean':>8}  {'std':>8}"
+    if args.synthetic:
+        header += f"  {'true':>8}"
+    print(header)
     for i, name in enumerate(PARAM_NAMES):
         mean = np.average(samples[:, i], weights=weights)
         var  = np.average((samples[:, i] - mean) ** 2, weights=weights)
         std  = np.sqrt(var)
-        print(f"  {name:>8}  {mean:>8.3f}  {std:>8.3f}")
+        if args.synthetic:
+            true_val = TRUE_PARAMS.get(name, 0.0)
+            print(f"  {name:>8}  {mean:>8.3f}  {std:>8.3f}  {true_val:>8.3f}")
+        else:
+            print(f"  {name:>8}  {mean:>8.3f}  {std:>8.3f}")
 
 
 if __name__ == "__main__":
