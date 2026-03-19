@@ -152,6 +152,7 @@ class OneLoopPowerGrid(LinearPowerGrid):
     """
 
     _LOOP_KEYS = ("p22", "p13", "I12", "J12", "I22", "I2K", "J22",
+                   "I12_v", "J12_v", "Ib3nl",
                    "p22_dt", "p22_tt", "p13_dt", "p13_tt")
 
     def __init__(self, k, z,

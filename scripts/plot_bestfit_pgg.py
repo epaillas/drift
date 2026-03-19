@@ -22,7 +22,6 @@ from drift.cosmology import get_cosmology
 from drift.io import load_pgg_measurements, mock_covariance, diagonal_covariance
 from drift.synthetic import make_synthetic_pgg
 from inference_pgg import (
-    _build_params, make_direct_theory_model,
     SPACE, MODEL_MODE, MEAS_PATH, COV_DIR, ELLS, Z, VARY_COSMO,
 )
 
@@ -88,14 +87,13 @@ def main():
     )
     args = parser.parse_args()
 
-    param_names, _ = _build_params(MODEL_MODE, vary_cosmo=args.vary_cosmo)
-
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Load chains
+    # Load chains — read param_names from the file to match the saved samples
     d = np.load(CHAINS_PATH, allow_pickle=True)
     samples = d["samples"]
     logl    = d["logl"]
+    param_names = list(d["param_names"])
     theta_bf = samples[np.argmax(logl)]
     print("Best-fit parameters:")
     for name, val in zip(param_names, theta_bf):
@@ -112,9 +110,9 @@ def main():
         elif synthetic_mode == "eft_full":
             TRUE_PARAMS = {"b1": 2.0, "c0": 5.0, "s0": 100.0}
         elif synthetic_mode in ("one_loop", "one_loop_matter_only"):
-            TRUE_PARAMS = {"b1": 2.0, "c0": 5.0, "c2": 2.0, "s0": 100.0, "b2": 0.5, "bs2": -0.5}
+            TRUE_PARAMS = {"b1": 2.0, "c0": 5.0, "c2": 2.0, "s0": 100.0, "b2": 0.5, "bs2": -0.5, "b3nl": 0.1}
         else:
-            TRUE_PARAMS = {"b1": 2.0, "c0": 5.0, "c2": 2.0, "s0": 100.0, "b2": 0.5, "bs2": -0.5}
+            TRUE_PARAMS = {"b1": 2.0, "c0": 5.0, "c2": 2.0, "s0": 100.0, "b2": 0.5, "bs2": -0.5, "b3nl": 0.1}
         k = np.linspace(0.01, 0.3, 30)
         print(f"Generating synthetic P_gg data vector (mode={synthetic_mode}) ...")
         data_y, _ = make_synthetic_pgg(
@@ -164,11 +162,46 @@ def main():
         idx += nk_ell
         print(errors[ell])
 
-    # Evaluate theory at best-fit
-    theory_fn = make_direct_theory_model(
-        cosmo, k, ells=ELLS, mode=MODEL_MODE, vary_cosmo=args.vary_cosmo,
+    # Evaluate theory at best-fit using param names from the chains file
+    from drift.eft_bias import GalaxyEFTParams
+    from drift.galaxy_models import pgg_eft_mu
+    from drift.multipoles import compute_multipoles
+
+    bf_dict = dict(zip(param_names, theta_bf))
+    vary_cosmo = "sigma8" in param_names and "Omega_m" in param_names
+    eval_cosmo = (
+        get_cosmology({"sigma8": bf_dict["sigma8"], "Omega_m": bf_dict["Omega_m"]})
+        if vary_cosmo else cosmo
     )
-    pred = theory_fn(theta_bf)
+    gal = GalaxyEFTParams(
+        b1=bf_dict.get("b1", 1.0),
+        c0=bf_dict.get("c0", 0.0),
+        c2=bf_dict.get("c2", 0.0),
+        c4=bf_dict.get("c4", 0.0),
+        s0=bf_dict.get("s0", 0.0),
+        s2=bf_dict.get("s2", 0.0),
+        b2=bf_dict.get("b2", 0.0),
+        bs2=bf_dict.get("bs2", 0.0),
+        b3nl=bf_dict.get("b3nl", 0.0),
+    )
+
+    # Detect the model mode from the chain's parameter set
+    chain_mode = MODEL_MODE
+    if "b2" in param_names or "bs2" in param_names or "b3nl" in param_names:
+        chain_mode = "one_loop"
+    elif "s0" in param_names and "c2" not in param_names:
+        chain_mode = "eft_full"
+    elif "c0" in param_names and "s0" not in param_names:
+        chain_mode = "eft_lite"
+
+    def _bf_model(kk, mu):
+        return pgg_eft_mu(
+            kk, mu, z=Z, cosmo=eval_cosmo,
+            gal_params=gal, space=SPACE, mode=chain_mode,
+        )
+
+    bf_poles = compute_multipoles(k, _bf_model, ells=ELLS)
+    pred = np.concatenate([bf_poles[ell] for ell in ELLS])
 
     # Reshape flat vector -> {ell: array}
     theory_bf = {}

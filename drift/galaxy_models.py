@@ -15,6 +15,7 @@ def _compute_loop_templates(k, plin_func):
     Returns
     -------
     dict with keys 'p22', 'p13', 'I12', 'J12', 'I22', 'I2K', 'J22',
+    'I12_v', 'J12_v', 'Ib3nl',
     'p22_dt', 'p22_tt', 'p13_dt', 'p13_tt', each shape (nk,).
     """
     p22 = compute_P22(k, plin_func)
@@ -60,7 +61,8 @@ def pgg_mu(k, mu, z, cosmo, b1, space="redshift"):
     return plin[:, np.newaxis] * kaiser[np.newaxis, :] ** 2
 
 
-def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_lite"):
+def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_lite",
+               ir_resum=False):
     """EFT galaxy auto-power spectrum P_gg(k, mu).
 
     Modes
@@ -69,7 +71,9 @@ def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_lite"):
     eft_lite  : tree + galaxy EFT counterterm
         P_gg = (b1+f*mu^2)^2 * P_lin
                - 2*k^2*(c0+c2*mu^2+c4*mu^4)*(b1+f*mu^2)*P_lin
-    eft_full  : eft_lite + stochastic term  s0 + s2*k^2
+    eft_full  : eft_lite + stochastic term  s0 + s2*(k*mu)^2
+    one_loop  : complete one-loop EFT (SPT loops + bias + RSD + counterterms + stochastic)
+    one_loop_matter_only : one-loop matter loops only (no bias loops)
 
     Parameters
     ----------
@@ -80,6 +84,9 @@ def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_lite"):
     gal_params : GalaxyEFTParams
     space : str
     mode : str
+    ir_resum : bool
+        If True, apply IR resummation (BAO damping) to the tree-level.
+        Only affects modes with a tree-level Kaiser term in redshift space.
 
     Returns
     -------
@@ -102,12 +109,14 @@ def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_lite"):
             loops = _compute_loop_templates(k, plin_func)
             b2  = gal_params.b2
             bs2 = gal_params.bs2
+            b3nl = gal_params.b3nl
             p_loop_bias = (
                 2.0 * b1 * b2   * loops["I12"]
                 + 2.0 * b1 * bs2 * loops["J12"]
                 + b2 ** 2        * loops["I22"]
                 + 2.0 * b2 * bs2 * loops["I2K"]
                 + bs2 ** 2       * loops["J22"]
+                + 4.0 * b1 * b3nl * loops["Ib3nl"]
             )
             P_real = b1 ** 2 * (plin + loops["p22"] + loops["p13"]) + p_loop_bias
             P = P_real[:, np.newaxis] * np.ones((1, len(mu)))
@@ -130,7 +139,27 @@ def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_lite"):
         return pgg_mu(k, mu, z, cosmo, b1, space=space)
 
     kaiser = b1 + f * mu ** 2   # (nmu,)
-    P = plin[:, np.newaxis] * kaiser[np.newaxis, :] ** 2
+
+    # --- Tree-level: (b1 + f*mu^2)^2 * P_lin, with optional IR resummation ---
+    if ir_resum:
+        from .ir_resummation import split_wiggle_nowiggle, compute_sigma_dd, ir_damping
+
+        h = float(cosmo['h'])
+        Om = float(cosmo['Omega_m'])
+        Ob = float(cosmo['Omega_b'])
+        ns = float(cosmo['n_s'])
+
+        pnw, pw = split_wiggle_nowiggle(k, plin, h, Om, Ob, ns)
+
+        def plin_func_for_sigma(kk):
+            return get_linear_power(cosmo, np.asarray(kk, dtype=float), z)
+
+        sigma_dd = compute_sigma_dd(plin_func_for_sigma)
+        damping = ir_damping(k, mu, f, sigma_dd)  # (nk, nmu)
+        P_tree_eff = pnw[:, np.newaxis] + pw[:, np.newaxis] * damping
+        P = P_tree_eff * kaiser[np.newaxis, :] ** 2
+    else:
+        P = plin[:, np.newaxis] * kaiser[np.newaxis, :] ** 2
 
     if mode in ("eft_lite", "eft_full", "one_loop_matter_only"):
         c0 = gal_params.c0
@@ -143,7 +172,10 @@ def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_lite"):
         P = P + counterterm
 
     if mode in ("eft_full", "one_loop_matter_only"):
-        P = P + (gal_params.s0 + gal_params.s2 * k ** 2)[:, np.newaxis]
+        # mu-dependent stochastic: s0 + s2*(k*mu)^2
+        P = P + gal_params.s0 + gal_params.s2 * (
+            k[:, np.newaxis] * mu[np.newaxis, :]
+        ) ** 2
 
     if mode == "one_loop_matter_only":
         def plin_func(kk):
@@ -165,6 +197,7 @@ def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_lite"):
     if mode == "one_loop":
         b2  = gal_params.b2
         bs2 = gal_params.bs2
+        b3nl = gal_params.b3nl
 
         def plin_func(kk):
             return get_linear_power(cosmo, np.asarray(kk, dtype=float), z)
@@ -174,12 +207,14 @@ def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_lite"):
         p22_dt, p22_tt = loops["p22_dt"], loops["p22_tt"]
         p13_dt, p13_tt = loops["p13_dt"], loops["p13_tt"]
 
+        # Real-space bias loops (mu^0)
         p_loop_bias = (
             2.0 * b1 * b2   * loops["I12"]
             + 2.0 * b1 * bs2 * loops["J12"]
             + b2 ** 2        * loops["I22"]
             + 2.0 * b2 * bs2 * loops["I2K"]
             + bs2 ** 2       * loops["J22"]
+            + 4.0 * b1 * b3nl * loops["Ib3nl"]
         )  # (nk,)
 
         # Density auto loop (isotropic, mu^0)
@@ -193,6 +228,12 @@ def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_lite"):
         P = P + (2.0 * b1 * f) * mu[np.newaxis, :] ** 2 * P_dt_loop[:, np.newaxis]
         P = P + f ** 2 * mu[np.newaxis, :] ** 4 * P_tt_loop[:, np.newaxis]
 
+        # RSD bias-velocity cross loops (mu^2)
+        P = P + (2.0 * f) * mu[np.newaxis, :] ** 2 * (
+            b2  * loops["I12_v"][:, np.newaxis]
+            + bs2 * loops["J12_v"][:, np.newaxis]
+        )
+
         # EFT counterterm
         c0 = gal_params.c0
         c2 = gal_params.c2
@@ -203,7 +244,9 @@ def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_lite"):
         )[:, np.newaxis] * ct_shape[np.newaxis, :] * kaiser[np.newaxis, :]
         P = P + counterterm
 
-        # Stochastic term
-        P = P + (gal_params.s0 + gal_params.s2 * k ** 2)[:, np.newaxis]
+        # mu-dependent stochastic: s0 + s2*(k*mu)^2
+        P = P + gal_params.s0 + gal_params.s2 * (
+            k[:, np.newaxis] * mu[np.newaxis, :]
+        ) ** 2
 
     return P

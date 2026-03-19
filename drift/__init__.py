@@ -8,6 +8,12 @@ from .one_loop import compute_one_loop_matter, compute_P22, compute_P13
 from .eft_config import EFTConfig, load_eft_config
 from .galaxy_models import pgg_mu, pgg_eft_mu
 from .galaxy_emulator import GalaxyTemplateEmulator
+from .ir_resummation import (
+    eisenstein_hu_nowiggle,
+    split_wiggle_nowiggle,
+    compute_sigma_dd,
+    ir_damping,
+)
 
 __all__ = [
     "DSSplitBin",
@@ -31,4 +37,8 @@ __all__ = [
     "pgg_mu",
     "pgg_eft_mu",
     "GalaxyTemplateEmulator",
+    "eisenstein_hu_nowiggle",
+    "split_wiggle_nowiggle",
+    "compute_sigma_dd",
+    "ir_damping",
 ]

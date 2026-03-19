@@ -446,6 +446,11 @@ def compute_bias_loops(
     I22 = np.zeros(len(k))
     I2K = np.zeros(len(k))
     J22 = np.zeros(len(k))
+    # RSD bias-velocity cross integrals
+    I12_v = np.zeros(len(k))
+    J12_v = np.zeros(len(k))
+    # b3nl (Gamma_3) P22-type integral
+    Ib3nl = np.zeros(len(k))
 
     for i, ki in enumerate(k):
         q2d = q_arr[:, np.newaxis]          # (nq, 1)
@@ -466,19 +471,37 @@ def compute_bias_loops(
         )
         f2 = np.where(k2 > 1e-10, f2, 0.0)
 
+        # G2_spt kernel (velocity divergence)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            g2s = (
+                3.0 / 7.0
+                + 0.5 * (q2d / k2 + k2 / q2d) * cos12
+                + 4.0 / 7.0 * cos12 ** 2
+            )
+        g2s = np.where(k2 > 1e-10, g2s, 0.0)
+
         # G2 (tidal) kernel
         g2 = cos12 ** 2 - 1.0 / 3.0                          # (nq, nmu)
+
+        # G2_spt - F2 = -2/7 + 2/7 cos^2  (Gamma_3 kernel)
+        delta_fg = -2.0 / 7.0 + 2.0 / 7.0 * cos12 ** 2
+        delta_fg = np.where(k2 > 1e-10, delta_fg, 0.0)
 
         plin_k2 = plin_func(k2.ravel()).reshape(k2.shape)     # (nq, nmu)
 
         base = q2d ** 3 * plin_q[:, np.newaxis] * plin_k2    # (nq, nmu)
 
-        # Accumulate five integrands
+        # Accumulate integrands — real-space bias loops
         ig_I12 = base * f2                                      # kernel = F2
-        ig_J12 = base * f2 * g2                                 # kernel = F2 * G2
+        ig_J12 = base * f2 * g2                                 # kernel = F2 * S2
         ig_I22 = 0.5 * base                                     # kernel = 1/2
-        ig_I2K = 0.5 * base * g2                                # kernel = G2 / 2
-        ig_J22 = 0.5 * base * g2 ** 2                           # kernel = G2^2 / 2
+        ig_I2K = 0.5 * base * g2                                # kernel = S2 / 2
+        ig_J22 = 0.5 * base * g2 ** 2                           # kernel = S2^2 / 2
+        # RSD bias-velocity cross loops
+        ig_I12_v = base * g2s                                    # kernel = G2_spt
+        ig_J12_v = base * g2s * g2                               # kernel = G2_spt * S2
+        # b3nl (Gamma_3) P22 integral
+        ig_Ib3nl = base * f2 * delta_fg                          # kernel = F2 * (G2_spt - F2)
 
         def _integrate(ig):
             mu_int = ig @ mu_weights                           # (nq,)
@@ -489,6 +512,9 @@ def compute_bias_loops(
         I22[i] = _integrate(ig_I22)
         I2K[i] = _integrate(ig_I2K)
         J22[i] = _integrate(ig_J22)
+        I12_v[i] = _integrate(ig_I12_v)
+        J12_v[i] = _integrate(ig_J12_v)
+        Ib3nl[i] = _integrate(ig_Ib3nl)
 
     prefactor = 1.0 / (4.0 * np.pi ** 2)
     return {
@@ -497,6 +523,9 @@ def compute_bias_loops(
         "I22": I22 * prefactor,
         "I2K": I2K * prefactor,
         "J22": J22 * prefactor,
+        "I12_v": I12_v * prefactor,
+        "J12_v": J12_v * prefactor,
+        "Ib3nl": Ib3nl * prefactor,
     }
 
 

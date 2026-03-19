@@ -67,8 +67,8 @@ def _build_params(model_mode, vary_cosmo=False):
         param_names += ["c2"]
         bounds = np.vstack([bounds, [[-50.0, 50.0]]])
     if model_mode == "one_loop":
-        param_names += ["b2", "bs2"]
-        bounds = np.vstack([bounds, [[-4.0, 4.0], [-4.0, 4.0]]])
+        param_names += ["b2", "bs2", "b3nl"]
+        bounds = np.vstack([bounds, [[-4.0, 4.0], [-4.0, 4.0], [-4.0, 4.0]]])
 
     return param_names, bounds
 
@@ -87,7 +87,7 @@ def _unpack_theta(theta, mode, vary_cosmo=False):
         sigma8  = float(theta[idx]); idx += 1
         omega_m = float(theta[idx]); idx += 1
     b1 = float(theta[idx]); idx += 1
-    c0, c2, s0, b2, bs2 = 0.0, 0.0, 0.0, 0.0, 0.0
+    c0, c2, s0, b2, bs2, b3nl = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     if mode in ("eft_lite", "eft_full", "one_loop", "one_loop_matter_only"):
         c0 = float(theta[idx]); idx += 1
     if mode in ("eft_full", "one_loop", "one_loop_matter_only"):
@@ -95,9 +95,11 @@ def _unpack_theta(theta, mode, vary_cosmo=False):
     if mode in ("one_loop", "one_loop_matter_only"):
         c2  = float(theta[idx]); idx += 1
     if mode == "one_loop":
-        b2  = float(theta[idx]); idx += 1
-        bs2 = float(theta[idx]); idx += 1
-    return dict(b1=b1, c0=c0, c2=c2, s0=s0, b2=b2, bs2=bs2, sigma8=sigma8, omega_m=omega_m)
+        b2   = float(theta[idx]); idx += 1
+        bs2  = float(theta[idx]); idx += 1
+        b3nl = float(theta[idx]); idx += 1
+    return dict(b1=b1, c0=c0, c2=c2, s0=s0, b2=b2, bs2=bs2, b3nl=b3nl,
+                sigma8=sigma8, omega_m=omega_m)
 
 
 def make_eft_theory_model(cosmo, k, ells, mode, cosmo_grid=None):
@@ -117,7 +119,8 @@ def make_eft_theory_model(cosmo, k, ells, mode, cosmo_grid=None):
                 plin, f = cosmo_grid.predict(p["sigma8"], p["omega_m"])
                 emulator.update_cosmology(plin, f)
         params = {"b1": p["b1"], "c0": p["c0"], "c2": p["c2"], "s0": p["s0"],
-                  "b2": p.get("b2", 0.0), "bs2": p.get("bs2", 0.0)}
+                  "b2": p.get("b2", 0.0), "bs2": p.get("bs2", 0.0),
+                  "b3nl": p.get("b3nl", 0.0)}
         return emulator.predict(params)
 
     return theory
@@ -138,6 +141,7 @@ def make_direct_theory_model(cosmo, k, ells, mode, vary_cosmo=False):
         gal = GalaxyEFTParams(
             b1=p["b1"], c0=p["c0"], c2=p["c2"], s0=p["s0"],
             b2=p.get("b2", 0.0), bs2=p.get("bs2", 0.0),
+            b3nl=p.get("b3nl", 0.0),
         )
 
         def model(kk, mu):
@@ -240,9 +244,9 @@ def main():
         elif synthetic_mode == "eft_full":
             TRUE_PARAMS = {"b1": 2.0, "c0": 5.0, "s0": 100.0}
         elif synthetic_mode in ("one_loop", "one_loop_matter_only"):
-            TRUE_PARAMS = {"b1": 2.0, "c0": 5.0, "c2": 2.0, "s0": 100.0, "b2": 0.5, "bs2": -0.5}
+            TRUE_PARAMS = {"b1": 2.0, "c0": 5.0, "c2": 2.0, "s0": 100.0, "b2": 0.5, "bs2": -0.5, "b3nl": 0.1}
         else:
-            TRUE_PARAMS = {"b1": 2.0, "c0": 5.0, "c2": 2.0, "s0": 100.0, "b2": 0.5, "bs2": -0.5}
+            TRUE_PARAMS = {"b1": 2.0, "c0": 5.0, "c2": 2.0, "s0": 100.0, "b2": 0.5, "bs2": -0.5, "b3nl": 0.1}
         k = np.linspace(0.01, 0.3, 30)
         cosmo = get_cosmology()
         print(f"Generating synthetic P_gg data vector (mode={synthetic_mode}) ...")

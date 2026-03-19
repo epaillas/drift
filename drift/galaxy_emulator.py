@@ -94,6 +94,9 @@ class GalaxyTemplateEmulator:
             self._T_I22 = loops["I22"]
             self._T_I2K = loops["I2K"]
             self._T_J22 = loops["J22"]
+            self._T_I12_v = loops["I12_v"]
+            self._T_J12_v = loops["J12_v"]
+            self._T_Ib3nl = loops["Ib3nl"]
             self._T_p22_dt = loops["p22_dt"]
             self._T_p22_tt = loops["p22_tt"]
             self._T_p13_dt = loops["p13_dt"]
@@ -114,7 +117,8 @@ class GalaxyTemplateEmulator:
         f : float
         loop_arrays : dict, optional
             Required when mode='one_loop'. Keys: 'p22', 'p13', 'I12', 'J12',
-            'I22', 'I2K', 'J22', 'p22_dt', 'p22_tt', 'p13_dt', 'p13_tt',
+            'I22', 'I2K', 'J22', 'I12_v', 'J12_v', 'Ib3nl',
+            'p22_dt', 'p22_tt', 'p13_dt', 'p13_tt',
             each shape (nk,).
         """
         plin = np.asarray(plin, dtype=float)
@@ -129,6 +133,9 @@ class GalaxyTemplateEmulator:
             self._T_I22 = loop_arrays["I22"]
             self._T_I2K = loop_arrays["I2K"]
             self._T_J22 = loop_arrays["J22"]
+            self._T_I12_v = loop_arrays["I12_v"]
+            self._T_J12_v = loop_arrays["J12_v"]
+            self._T_Ib3nl = loop_arrays["Ib3nl"]
             self._T_p22_dt = loop_arrays["p22_dt"]
             self._T_p22_tt = loop_arrays["p22_tt"]
             self._T_p13_dt = loop_arrays["p13_dt"]
@@ -138,7 +145,7 @@ class GalaxyTemplateEmulator:
     # Core analytic projection
     # ------------------------------------------------------------------
 
-    def _pole(self, b1, c0, c2, c4, s0, s2, ell, b2=0.0, bs2=0.0):
+    def _pole(self, b1, c0, c2, c4, s0, s2, ell, b2=0.0, bs2=0.0, b3nl=0.0):
         """Analytic Legendre multipole P_ell(k) for the galaxy auto-spectrum.
 
         Parameters
@@ -196,12 +203,14 @@ class GalaxyTemplateEmulator:
         # ---- One-loop corrections (one_loop mode) ----
         if self.mode == "one_loop":
             p_loop_dd = b1 ** 2 * (self._T_p22 + self._T_p13)
+            # Real-space bias loops (mu^0)
             p_loop_bias = (
                 2.0 * b1 * b2   * self._T_I12
                 + 2.0 * b1 * bs2  * self._T_J12
                 + b2 ** 2          * self._T_I22
                 + 2.0 * b2 * bs2  * self._T_I2K
                 + bs2 ** 2         * self._T_J22
+                + 4.0 * b1 * b3nl * self._T_Ib3nl
             )
             cm0 = cm0 + p_loop_dd + p_loop_bias
             # Velocity loop contributions: density×velocity (mu^2) and velocity auto (mu^4)
@@ -209,10 +218,21 @@ class GalaxyTemplateEmulator:
             P_tt_loop = self._T_p22_tt + self._T_p13_tt
             cm2 = cm2 + 2.0 * b1 * f * P_dt_loop
             cm4 = cm4 + f ** 2 * P_tt_loop
+            # RSD bias-velocity cross loops (mu^2)
+            cm2 = cm2 + 2.0 * f * (
+                b2  * self._T_I12_v
+                + bs2 * self._T_J12_v
+            )
 
         # ---- Stochastic terms (eft_full and one_loop) ----
+        # mu-dependent stochastic: s0 + s2*(k*mu)^2
         if self.mode in ("eft_full", "one_loop", "one_loop_matter_only"):
-            cm0 = cm0 + s0 + s2 * k2
+            if self.space == "real":
+                # In real space, stochastic is isotropic: s0 + s2*k^2
+                cm0 = cm0 + s0 + s2 * k2
+            else:
+                cm0 = cm0 + s0
+                cm2 = cm2 + s2 * k2
 
         return M0 * cm0 + M2 * cm2 + M4 * cm4 + M6 * cm6
 
@@ -232,22 +252,28 @@ class GalaxyTemplateEmulator:
                 EFT counterterm coefficients (default 0).
             ``'s0'``, ``'s2'`` : float, optional
                 Stochastic amplitude parameters (eft_full; default 0).
+            ``'b2'``, ``'bs2'`` : float, optional
+                Quadratic and tidal bias (one_loop; default 0).
+            ``'b3nl'`` : float, optional
+                Non-local cubic bias (one_loop; default 0).
 
         Returns
         -------
         np.ndarray, shape (n_ells * nk,)
             Flat data vector ordered as ``[ell0_k0..kN, ell2_k0..kN, ...]``.
         """
-        b1  = float(params["b1"])
-        c0  = float(params.get("c0", 0.0))
-        c2  = float(params.get("c2", 0.0))
-        c4  = float(params.get("c4", 0.0))
-        s0  = float(params.get("s0", 0.0))
-        s2  = float(params.get("s2", 0.0))
-        b2  = float(params.get("b2", 0.0))
-        bs2 = float(params.get("bs2", 0.0))
+        b1   = float(params["b1"])
+        c0   = float(params.get("c0", 0.0))
+        c2   = float(params.get("c2", 0.0))
+        c4   = float(params.get("c4", 0.0))
+        s0   = float(params.get("s0", 0.0))
+        s2   = float(params.get("s2", 0.0))
+        b2   = float(params.get("b2", 0.0))
+        bs2  = float(params.get("bs2", 0.0))
+        b3nl = float(params.get("b3nl", 0.0))
 
         pieces = []
         for ell in self.ells:
-            pieces.append(self._pole(b1, c0, c2, c4, s0, s2, ell, b2=b2, bs2=bs2))
+            pieces.append(self._pole(b1, c0, c2, c4, s0, s2, ell,
+                                     b2=b2, bs2=bs2, b3nl=b3nl))
         return np.concatenate(pieces)

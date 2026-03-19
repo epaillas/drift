@@ -17,7 +17,14 @@ matplotlib.use("Agg")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from drift.cosmology import _DEFAULT_PARAMS
 from getdist import MCSamples, plots
+
+# Planck 2018 true cosmological parameters (AbacusSummit fiducial)
+_TRUE_COSMO = {
+    "sigma8":  _DEFAULT_PARAMS["sigma8"],
+    "Omega_m": _DEFAULT_PARAMS["Omega_m"],
+}
 
 # Known parameter -> LaTeX mappings
 _LATEX = {
@@ -30,6 +37,7 @@ _LATEX = {
     "c2":      r"c_2",
     "c4":      r"c_4",
     "s0":      r"s_0",
+    "b3nl":    r"b_{3\mathrm{nl}}",
 }
 
 # Patterns: prefix -> latex template (the trailing quantile index is appended)
@@ -97,10 +105,21 @@ def main():
     g.settings.legend_fontsize = 11
     g.triangle_plot([mcs], filled=True, title_limit=1)
 
-    # Mark posterior mean on each 1-D marginal
-    means = np.average(samples, weights=weights, axis=0)
-    for i, ax in enumerate(g.subplots[i, i] for i in range(len(param_names))):
-        ax.axvline(means[i], color="C1", ls="--", lw=1.0)
+    # Mark true Planck 2018 cosmological parameters
+    n_params = len(param_names)
+    for i in range(n_params):
+        pi = param_names[i]
+        if pi in _TRUE_COSMO:
+            g.subplots[i, i].axvline(_TRUE_COSMO[pi], color="C1", ls="--", lw=1.0)
+        for j in range(i):
+            pj = param_names[j]
+            ax = g.subplots[i, j]
+            if ax is None:
+                continue
+            if pj in _TRUE_COSMO:
+                ax.axvline(_TRUE_COSMO[pj], color="C1", ls="--", lw=1.0)
+            if pi in _TRUE_COSMO:
+                ax.axhline(_TRUE_COSMO[pi], color="C1", ls="--", lw=1.0)
 
     out_path = args.output or (args.chains.parent / "triangle.png")
     out_path.parent.mkdir(parents=True, exist_ok=True)
