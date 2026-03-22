@@ -23,7 +23,7 @@ from drift.synthetic import make_synthetic_pgg
 from drift.io import diagonal_covariance
 
 # --- Config ---
-MODE = "eft_lite"
+MODE = "eft_ct"
 ELLS = (0, 2)
 Z = 0.5
 SPACE = "redshift"

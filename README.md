@@ -94,7 +94,7 @@ p1loop = compute_one_loop_matter(k, plin_func)["p1loop"]
 
 pkmu = pqg_eft_mu(k, mu, z=0.5, cosmo=cosmo,
                   ds_params=ds_bin, gal_params=gal, R=10.0,
-                  mode="eft_lite",
+                  mode="eft_ct",
                   loop_kwargs={"p1loop_precomputed": p1loop})
 ```
 

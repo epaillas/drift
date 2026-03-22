@@ -21,7 +21,7 @@ class EFTConfig:
     R: float = 10.0
     kernel: str = "gaussian"
     ds_model: str = "baseline"
-    mode: str = "eft_lite"
+    mode: str = "eft_ct"
     split_bins: List[DSSplitBinEFT] = field(default_factory=list)
     gal_params: Optional[GalaxyEFTParams] = None
     loop_kwargs: dict = field(default_factory=lambda: {
@@ -106,7 +106,7 @@ def load_eft_config(path) -> EFTConfig:
         R=float(raw.get("R", 10.0)),
         kernel=str(raw.get("kernel", "gaussian")),
         ds_model=str(raw.get("ds_model", "baseline")),
-        mode=str(raw.get("mode", "eft_lite")),
+        mode=str(raw.get("mode", "eft_ct")),
         split_bins=split_bins,
         gal_params=gal_params,
         loop_kwargs=loop_kwargs,

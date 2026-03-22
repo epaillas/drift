@@ -2,9 +2,9 @@
 
 Four curves per panel:
   tree          — pqg_mu (tree-level baseline)
-  eft/tree_only — pqg_eft_mu(mode="tree_only")  [must match tree exactly]
-  eft/eft_lite  — pqg_eft_mu(mode="eft_lite")   [+ galaxy ct + DS ct; no loop promotion]
-  eft/eft_full  — pqg_eft_mu(mode="eft_full")   [+ stochastic term]
+  eft/tree_only — pqg_eft_mu(mode="tree")  [must match tree exactly]
+  eft/eft_lite  — pqg_eft_mu(mode="eft_ct")   [+ galaxy ct + DS ct; no loop promotion]
+  eft/eft_full  — pqg_eft_mu(mode="eft")   [+ stochastic term]
 
 The galaxy EFT counterterm is weighted by the DS-side amplitude bq1*W_R(k),
 so DS1 (bq1 < 0) and DS5 (bq1 > 0) receive opposite-sign contributions.
@@ -115,9 +115,9 @@ def main():
 
         all_callables = {
             "tree":          tree_model,
-            "eft/tree_only": _make_eft_callable(cosmo, ds_eft, gal_eft, "tree_only"),
-            "eft/eft_lite":  _make_eft_callable(cosmo, ds_eft, gal_eft, "eft_lite"),
-            "eft/eft_full":  _make_eft_callable(cosmo, ds_eft, gal_eft, "eft_full"),
+            "eft/tree_only": _make_eft_callable(cosmo, ds_eft, gal_eft, "tree"),
+            "eft/eft_lite":  _make_eft_callable(cosmo, ds_eft, gal_eft, "eft_ct"),
+            "eft/eft_full":  _make_eft_callable(cosmo, ds_eft, gal_eft, "eft"),
         }
 
         # Compute multipoles for each model

@@ -4,6 +4,7 @@ import numpy as np
 
 from .cosmology import get_cosmology
 from .galaxy_emulator import GalaxyTemplateEmulator
+from .emulator import TemplateEmulator
 
 
 def make_synthetic_pgg(
@@ -45,6 +46,52 @@ def make_synthetic_pgg(
         cosmo = get_cosmology()
 
     emulator = GalaxyTemplateEmulator(cosmo, k, ells=ells, z=z, space=space, mode=mode)
+    data_vector = emulator.predict(true_params)
+
+    return data_vector, true_params
+
+
+def make_synthetic_dsg(
+    k,
+    ells,
+    z,
+    R,
+    kernel,
+    space,
+    ds_model,
+    mode,
+    true_params,
+    cosmo=None,
+):
+    """Generate synthetic DS × galaxy multipoles from the template emulator.
+
+    Parameters
+    ----------
+    k : array_like, shape (nk,)
+    ells : tuple of int
+    z : float
+    R : float
+    kernel : str
+    space : str
+    ds_model : str
+    mode : str
+    true_params : dict
+        Must contain 'b1', 'bq1' (array), and any EFT params.
+    cosmo : cosmoprimo.Cosmology, optional
+
+    Returns
+    -------
+    data_vector : np.ndarray
+    true_params : dict
+    """
+    if cosmo is None:
+        cosmo = get_cosmology()
+
+    emulator = TemplateEmulator(
+        cosmo, k, ells=ells, z=z, R=R,
+        kernel=kernel, space=space,
+        ds_model=ds_model, mode=mode,
+    )
     data_vector = emulator.predict(true_params)
 
     return data_vector, true_params

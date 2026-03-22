@@ -33,7 +33,7 @@ from inference_dsg import make_log_likelihood
 # Constants
 # ---------------------------------------------------------------------------
 SPACE      = "redshift"  # "redshift" | "real"
-MODEL_MODE = "one_loop"  # "tree_only" | "eft_lite" | "eft_full" | "one_loop"
+MODEL_MODE = "one_loop"  # "tree" | "eft_ct" | "eft" | "one_loop"
 
 MEAS_PATH  = Path(__file__).parents[1] / "outputs" / "hods" / "mesh2_spectrum_poles_c000_hod007.h5"
 COV_DIR    = Path(__file__).parents[1] / "outputs" / "hods" / "for_covariance"
@@ -109,20 +109,20 @@ def _build_params(model_mode, free_cosmo_names=None, cosmo_bounds=None):
     bounds = np.vstack([cosmo_bounds, [[0.5, 4.0]]]) if len(cosmo_bounds) > 0 else np.array([[0.5, 4.0]])
     is_linear = [False] * len(param_names)  # cosmo params + b1 are nonlinear
 
-    if model_mode != "tree_only":
+    if model_mode != "tree":
         param_names.append("sigma_fog")
         bounds = np.vstack([bounds, [[0.0, 30.0]]])
         is_linear.append(False)
 
-    if model_mode in ("eft_lite", "eft_full", "one_loop", "one_loop_matter_only"):
+    if model_mode in ("eft_ct", "eft", "one_loop"):
         param_names += ["c0"]
         bounds = np.vstack([bounds, [[-50.0, 50.0]]])
         is_linear.append(True)
-    if model_mode in ("eft_full", "one_loop", "one_loop_matter_only"):
+    if model_mode in ("eft", "one_loop"):
         param_names += ["s0"]
         bounds = np.vstack([bounds, [[-5000.0, 5000.0]]])
         is_linear.append(True)
-    if model_mode in ("one_loop", "one_loop_matter_only"):
+    if model_mode in ("one_loop",):
         param_names += ["c2"]
         bounds = np.vstack([bounds, [[-50.0, 50.0]]])
         is_linear.append(True)
@@ -153,7 +153,7 @@ def _build_params_marginalized(model_mode, free_cosmo_names=None, cosmo_bounds=N
     param_names = list(free_cosmo_names) + ["b1"]
     bounds = np.vstack([cosmo_bounds, [[0.5, 4.0]]]) if len(cosmo_bounds) > 0 else np.array([[0.5, 4.0]])
 
-    if model_mode != "tree_only":
+    if model_mode != "tree":
         param_names.append("sigma_fog")
         bounds = np.vstack([bounds, [[0.0, 30.0]]])
 
@@ -179,7 +179,7 @@ def _unpack_theta_marginalized(theta, mode, free_cosmo_names=None, fixed_cosmo=N
 
     b1 = float(theta[idx]); idx += 1
     sigma_fog = 0.0
-    if mode != "tree_only":
+    if mode != "tree":
         sigma_fog = float(theta[idx]); idx += 1
     b2, bs2 = 0.0, 0.0
     if mode == "one_loop":
@@ -209,14 +209,14 @@ def _unpack_theta(theta, mode, free_cosmo_names=None, fixed_cosmo=None):
 
     b1 = float(theta[idx]); idx += 1
     sigma_fog = 0.0
-    if mode != "tree_only":
+    if mode != "tree":
         sigma_fog = float(theta[idx]); idx += 1
     c0, c2, c4, s0, s2, b2, bs2, b3nl = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-    if mode in ("eft_lite", "eft_full", "one_loop", "one_loop_matter_only"):
+    if mode in ("eft_ct", "eft", "one_loop"):
         c0 = float(theta[idx]); idx += 1
-    if mode in ("eft_full", "one_loop", "one_loop_matter_only"):
+    if mode in ("eft", "one_loop"):
         s0 = float(theta[idx]); idx += 1
-    if mode in ("one_loop", "one_loop_matter_only"):
+    if mode in ("one_loop",):
         c2  = float(theta[idx]); idx += 1
         c4  = float(theta[idx]); idx += 1
         s2  = float(theta[idx]); idx += 1
@@ -246,7 +246,7 @@ def make_eft_theory_model(cosmo, k, ells, mode, cosmo_grid=None,
                           fixed_cosmo=fixed_cosmo)
         if vary_cosmo:
             cosmo_kw = {name: p["cosmo"][name] for name in free_cosmo_names}
-            if mode in ("one_loop", "one_loop_matter_only"):
+            if mode in ("one_loop",):
                 plin, f, loop_arrays = cosmo_grid.predict(**cosmo_kw)
                 emulator.update_cosmology(plin, f, loop_arrays=loop_arrays)
             else:
@@ -281,7 +281,7 @@ def make_eft_theory_model_marginalized(cosmo, k, ells, mode, cosmo_grid=None,
         if vary_cosmo:
             if use_grid:
                 cosmo_kw = {name: p["cosmo"][name] for name in free_cosmo_names}
-                if mode in ("one_loop", "one_loop_matter_only"):
+                if mode in ("one_loop",):
                     plin, f, loop_arrays = cosmo_grid.predict(**cosmo_kw)
                     emulator.update_cosmology(plin, f, loop_arrays=loop_arrays)
                 else:
@@ -292,7 +292,7 @@ def make_eft_theory_model_marginalized(cosmo, k, ells, mode, cosmo_grid=None,
                 eval_cosmo = get_cosmology(p["cosmo"])
                 plin = get_linear_power(eval_cosmo, k, Z)
                 f = get_growth_rate(eval_cosmo, Z)
-                if mode in ("one_loop", "one_loop_matter_only"):
+                if mode in ("one_loop",):
                     loop_arrays = _compute_loop_templates(
                         k, lambda kk: get_linear_power(eval_cosmo, np.asarray(kk), Z)
                     )
@@ -404,7 +404,7 @@ def main():
     )
     parser.add_argument(
         "--synthetic-mode",
-        choices=["tree_only", "eft_lite", "eft_full", "one_loop", "one_loop_matter_only"],
+        choices=["tree", "eft_ct", "eft", "one_loop"],
         default=None,
         metavar="MODE",
         help=(
@@ -492,13 +492,13 @@ def main():
         synthetic_mode = args.synthetic_mode or MODEL_MODE
         # True parameters depend on the synthetic mode:
         # simpler modes only need b1; extra params are zero by definition.
-        if synthetic_mode == "tree_only":
+        if synthetic_mode == "tree":
             TRUE_PARAMS = {"b1": 2.0, "sigma_fog": 0.0}
-        elif synthetic_mode == "eft_lite":
+        elif synthetic_mode == "eft_ct":
             TRUE_PARAMS = {"b1": 2.0, "sigma_fog": 5.0, "c0": 5.0}
-        elif synthetic_mode == "eft_full":
+        elif synthetic_mode == "eft":
             TRUE_PARAMS = {"b1": 2.0, "sigma_fog": 5.0, "c0": 5.0, "s0": 100.0}
-        elif synthetic_mode in ("one_loop", "one_loop_matter_only"):
+        elif synthetic_mode in ("one_loop",):
             TRUE_PARAMS = {"b1": 2.0, "sigma_fog": 5.0, "c0": 5.0, "c2": 2.0, "c4": 0.0, "s0": 100.0, "s2": 0.0, "b2": 0.5, "bs2": -0.5, "b3nl": 0.1}
         else:
             TRUE_PARAMS = {"b1": 2.0, "sigma_fog": 5.0, "c0": 5.0, "c2": 2.0, "c4": 0.0, "s0": 100.0, "s2": 0.0, "b2": 0.5, "bs2": -0.5, "b3nl": 0.1}
@@ -670,7 +670,7 @@ def main():
         cosmo_grid = None
         if args.vary_cosmo and not args.no_emulator:
             cosmo_ranges = {name: DEFAULT_COSMO_RANGES[name] for name in free_cosmo_names}
-            if MODEL_MODE in ("one_loop", "one_loop_matter_only"):
+            if MODEL_MODE in ("one_loop",):
                 print(f"Precomputing OneLoopPowerGrid ({' x '.join(free_cosmo_names)}) ...")
                 cosmo_grid = OneLoopPowerGrid(
                     k, z=Z, cosmo_ranges=cosmo_ranges, fixed_params=fixed_cosmo,

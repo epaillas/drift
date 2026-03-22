@@ -71,12 +71,12 @@ def test_pgg_mu_real_space(cosmo, k, plin):
 
 
 def test_pgg_eft_tree_matches_pgg_mu(cosmo, k, f):
-    """pgg_eft_mu with mode='tree_only' must equal pgg_mu."""
+    """pgg_eft_mu with mode='tree' must equal pgg_mu."""
     b1 = 2.0
     mu = np.linspace(-1, 1, 50)
     gal = GalaxyEFTParams(b1=b1)
     P_eft = pgg_eft_mu(k, mu, z=0.5, cosmo=cosmo, gal_params=gal,
-                       space="redshift", mode="tree_only")
+                       space="redshift", mode="tree")
     P_kaiser = pgg_mu(k, mu, z=0.5, cosmo=cosmo, b1=b1, space="redshift")
     np.testing.assert_allclose(P_eft, P_kaiser, rtol=1e-12)
 
@@ -90,14 +90,14 @@ def test_galaxy_emulator_matches_direct(cosmo, k):
     ells = (0, 2, 4)
 
     emulator = GalaxyTemplateEmulator(
-        cosmo, k, ells=ells, z=0.5, space="redshift", mode="eft_full"
+        cosmo, k, ells=ells, z=0.5, space="redshift", mode="eft"
     )
     params = {"b1": b1, "c0": c0, "s0": s0}
     pred_emulator = emulator.predict(params)
 
     def model(kk, mu):
         return pgg_eft_mu(kk, mu, z=0.5, cosmo=cosmo, gal_params=gal,
-                          space="redshift", mode="eft_full")
+                          space="redshift", mode="eft")
 
     poles_direct = compute_multipoles(k, model, ells=ells)
     pred_direct = np.concatenate([poles_direct[ell] for ell in ells])
@@ -155,72 +155,3 @@ def test_galaxy_emulator_one_loop_matches_direct_nonzero_b2bs2(cosmo, k):
     np.testing.assert_allclose(pred_emulator, pred_direct, rtol=1e-3)
 
 
-def test_one_loop_matter_only_reduces_to_eft_full(cosmo, k):
-    """one_loop_matter_only with zeroed loop templates equals eft_full."""
-    b1, c0, s0 = 1.8, 5.0, 100.0
-    ells = (0, 2, 4)
-
-    emu_eft = GalaxyTemplateEmulator(cosmo, k, ells=ells, z=0.5, mode="eft_full")
-    pred_eft = emu_eft.predict({"b1": b1, "c0": c0, "s0": s0})
-
-    emu_monly = GalaxyTemplateEmulator(cosmo, k, ells=ells, z=0.5, mode="one_loop_matter_only")
-    # Zero out loop templates
-    nk = len(k)
-    zeros = np.zeros(nk)
-    for attr in ("_T_p22", "_T_p13", "_T_p22_dt", "_T_p22_tt", "_T_p13_dt", "_T_p13_tt"):
-        setattr(emu_monly, attr, zeros)
-    pred_monly = emu_monly.predict({"b1": b1, "c0": c0, "s0": s0})
-
-    np.testing.assert_allclose(pred_monly, pred_eft, rtol=1e-12)
-
-
-def test_one_loop_matter_only_vs_one_loop_diff_is_bias_only(cosmo, k):
-    """Difference between one_loop and one_loop_matter_only is exactly p_loop_bias."""
-    b1, b2, bs2, c0, s0 = 1.8, 0.5, -0.3, 5.0, 100.0
-    ells = (0, 2, 4)
-    params = {"b1": b1, "b2": b2, "bs2": bs2, "c0": c0, "s0": s0}
-
-    emu_full = GalaxyTemplateEmulator(cosmo, k, ells=ells, z=0.5, mode="one_loop")
-    emu_monly = GalaxyTemplateEmulator(cosmo, k, ells=ells, z=0.5, mode="one_loop_matter_only")
-
-    pred_full = emu_full.predict(params)
-    pred_monly = emu_monly.predict(params)
-
-    # The difference should be non-zero (bias loops contribute)
-    assert not np.allclose(pred_full, pred_monly, atol=1e-10)
-
-
-def test_one_loop_matter_only_equals_one_loop_at_zero_bias(cosmo, k):
-    """one_loop with b2=bs2=0 must equal one_loop_matter_only."""
-    b1, c0, s0 = 1.8, 5.0, 100.0
-    ells = (0, 2, 4)
-    params = {"b1": b1, "c0": c0, "s0": s0, "b2": 0.0, "bs2": 0.0}
-
-    emu_full = GalaxyTemplateEmulator(cosmo, k, ells=ells, z=0.5, mode="one_loop")
-    emu_monly = GalaxyTemplateEmulator(cosmo, k, ells=ells, z=0.5, mode="one_loop_matter_only")
-
-    pred_full = emu_full.predict(params)
-    pred_monly = emu_monly.predict(params)
-
-    np.testing.assert_allclose(pred_full, pred_monly, rtol=1e-12)
-
-
-def test_galaxy_emulator_one_loop_matter_only_matches_direct(cosmo, k):
-    """one_loop_matter_only emulator matches GL quadrature."""
-    b1, c0, s0 = 1.8, 5.0, 100.0
-    gal = GalaxyEFTParams(b1=b1, c0=c0, s0=s0)
-    ells = (0, 2, 4)
-
-    emulator = GalaxyTemplateEmulator(
-        cosmo, k, ells=ells, z=0.5, mode="one_loop_matter_only"
-    )
-    pred_emulator = emulator.predict({"b1": b1, "c0": c0, "s0": s0})
-
-    def model(kk, mu):
-        return pgg_eft_mu(kk, mu, z=0.5, cosmo=cosmo, gal_params=gal,
-                          space="redshift", mode="one_loop_matter_only")
-
-    poles_direct = compute_multipoles(k, model, ells=ells)
-    pred_direct = np.concatenate([poles_direct[ell] for ell in ells])
-
-    np.testing.assert_allclose(pred_emulator, pred_direct, rtol=1e-3)

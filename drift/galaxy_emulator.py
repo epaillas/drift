@@ -10,7 +10,7 @@ import numpy as np
 
 from .cosmology import get_linear_power, get_growth_rate
 
-_VALID_MODES = ("tree_only", "eft_lite", "eft_full", "one_loop", "one_loop_matter_only")
+_VALID_MODES = ("tree", "eft_ct", "eft", "one_loop")
 _EMULATOR_UNSUPPORTED_MODES = ()
 
 # Analytic Legendre moments (same as emulator.py)
@@ -40,7 +40,7 @@ class GalaxyTemplateEmulator:
     space : str
         ``'redshift'`` (default) or ``'real'``.
     mode : str
-        EFT mode: ``'tree_only'``, ``'eft_lite'`` (default), or ``'eft_full'``.
+        EFT mode: ``'tree'``, ``'eft_ct'`` (default), or ``'eft'``.
     """
 
     def __init__(
@@ -50,7 +50,7 @@ class GalaxyTemplateEmulator:
         ells=(0, 2, 4),
         z=0.5,
         space="redshift",
-        mode="eft_lite",
+        mode="eft_ct",
     ):
         if mode not in _VALID_MODES:
             raise ValueError(f"Unknown mode '{mode}'. Choose one of {_VALID_MODES}.")
@@ -82,7 +82,7 @@ class GalaxyTemplateEmulator:
         self._T_k2Plin = k ** 2 * plin  # k^2 * P_lin
         self._T_k2 = k ** 2             # k^2 (stochastic shape)
 
-        if self.mode in ("one_loop", "one_loop_matter_only"):
+        if self.mode in ("one_loop",):
             from .galaxy_models import _compute_loop_templates
             def plin_func(kk):
                 return get_linear_power(cosmo, np.asarray(kk, dtype=float), self.z)
@@ -125,7 +125,7 @@ class GalaxyTemplateEmulator:
         self._T_Plin = plin
         self._T_k2Plin = self.k ** 2 * plin
         self.f = float(f)
-        if self.mode in ("one_loop", "one_loop_matter_only") and loop_arrays is not None:
+        if self.mode in ("one_loop",) and loop_arrays is not None:
             self._T_p22 = loop_arrays["p22"]
             self._T_p13 = loop_arrays["p13"]
             self._T_I12 = loop_arrays["I12"]
@@ -188,7 +188,7 @@ class GalaxyTemplateEmulator:
         #   mu^2: -2*(b1*c2 + f*c0)
         #   mu^4: -2*(b1*c4 + f*c2)
         #   mu^6: -2*f*c4
-        if self.mode != "tree_only":
+        if self.mode != "tree":
             cm0 = cm0 - 2.0 * b1 * c0 * k2A
             cm2 = cm2 - 2.0 * (b1 * c2 + f * c0) * k2A
             cm4 = cm4 - 2.0 * (b1 * c4 + f * c2) * k2A
@@ -198,15 +198,6 @@ class GalaxyTemplateEmulator:
                 cm2 = cm2 - sigma_fog * b1 ** 2 * k2A
                 cm4 = cm4 - sigma_fog * 2.0 * b1 * f * k2A
                 cm6 = cm6 - sigma_fog * f ** 2 * k2A
-
-        # ---- One-loop matter-only corrections ----
-        if self.mode == "one_loop_matter_only":
-            p_loop_dd = b1 ** 2 * (self._T_p22 + self._T_p13)
-            cm0 = cm0 + p_loop_dd
-            P_dt_loop = self._T_p22_dt + self._T_p13_dt
-            P_tt_loop = self._T_p22_tt + self._T_p13_tt
-            cm2 = cm2 + 2.0 * b1 * f * P_dt_loop
-            cm4 = cm4 + f ** 2 * P_tt_loop
 
         # ---- One-loop corrections (one_loop mode) ----
         if self.mode == "one_loop":
@@ -234,7 +225,7 @@ class GalaxyTemplateEmulator:
 
         # ---- Stochastic terms (eft_full and one_loop) ----
         # mu-dependent stochastic: s0 + s2*(k*mu)^2
-        if self.mode in ("eft_full", "one_loop", "one_loop_matter_only"):
+        if self.mode in ("eft", "one_loop"):
             if self.space == "real":
                 # In real space, stochastic is isotropic: s0 + s2*k^2
                 cm0 = cm0 + s0 + s2 * k2
@@ -251,14 +242,12 @@ class GalaxyTemplateEmulator:
     @property
     def linear_param_names(self):
         """Return list of linear parameter names for the current mode."""
-        if self.mode == "tree_only":
+        if self.mode == "tree":
             return []
-        elif self.mode == "eft_lite":
+        elif self.mode == "eft_ct":
             return ["c0"]
-        elif self.mode == "eft_full":
+        elif self.mode == "eft":
             return ["c0", "s0"]
-        elif self.mode == "one_loop_matter_only":
-            return ["c0", "c2", "c4", "s0", "s2"]
         elif self.mode == "one_loop":
             return ["c0", "c2", "c4", "s0", "s2", "b3nl"]
         return []
@@ -280,7 +269,7 @@ class GalaxyTemplateEmulator:
 
         templates = {}
 
-        if self.mode == "tree_only":
+        if self.mode == "tree":
             return templates
 
         # c0: -2 * k^2 * P_lin * (b1*M0 + f*M2)
@@ -291,13 +280,13 @@ class GalaxyTemplateEmulator:
         # M0*(-2*b1*k2A) + M2*(-2*f*k2A)
         templates["c0"] = M0 * (-2.0 * b1 * k2A) + M2 * (-2.0 * f * k2A)
 
-        if self.mode in ("one_loop", "one_loop_matter_only"):
+        if self.mode in ("one_loop",):
             # c2: appears in mu^2 (-2*b1*c2) and mu^4 (-2*f*c2)
             templates["c2"] = M2 * (-2.0 * b1 * k2A) + M4 * (-2.0 * f * k2A)
             # c4: appears in mu^4 (-2*b1*c4) and mu^6 (-2*f*c4)
             templates["c4"] = M4 * (-2.0 * b1 * k2A) + M6 * (-2.0 * f * k2A)
 
-        if self.mode in ("eft_full", "one_loop", "one_loop_matter_only"):
+        if self.mode in ("eft", "one_loop"):
             # s0: stochastic constant
             if self.space == "real":
                 templates["s0"] = M0 * np.ones(nk) + M2 * np.zeros(nk)

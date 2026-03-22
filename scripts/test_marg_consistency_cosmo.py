@@ -92,7 +92,7 @@ def main():
 
     # 2. Build cosmology grid (1D over sigma8)
     cosmo_ranges = {"sigma8": SIGMA8_RANGE}
-    needs_loops = MODE in ("one_loop", "one_loop_matter_only")
+    needs_loops = MODE in ("one_loop",)
     if needs_loops:
         print("\nBuilding OneLoopPowerGrid over sigma8 ...")
         cosmo_grid = OneLoopPowerGrid(k, Z, cosmo_ranges=cosmo_ranges)

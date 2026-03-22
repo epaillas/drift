@@ -74,8 +74,8 @@ def _emulator_predict(cosmo, k, ds_params, gal_params, ds_model, mode):
 def test_tree_only_matches_reference(cosmo, k, ds_model):
     ds = DSSplitBinEFT(label="DS3", bq1=0.7, beta_q=0.4)
     gal = GalaxyEFTParams(b1=1.8)
-    ref = _reference_multipoles(cosmo, k, ds, gal, ds_model, "tree_only")
-    got = _emulator_predict(cosmo, k, ds, gal, ds_model, "tree_only")
+    ref = _reference_multipoles(cosmo, k, ds, gal, ds_model, "tree")
+    got = _emulator_predict(cosmo, k, ds, gal, ds_model, "tree")
     np.testing.assert_allclose(got, ref, rtol=1e-10,
         err_msg=f"tree_only / {ds_model}: emulator vs GL mismatch")
 
@@ -88,8 +88,8 @@ def test_tree_only_matches_reference(cosmo, k, ds_model):
 def test_eft_lite_matches_reference(cosmo, k, ds_model):
     ds = DSSplitBinEFT(label="DS1", bq1=-1.3, beta_q=0.3)
     gal = GalaxyEFTParams(b1=2.1, c0=5.0)
-    ref = _reference_multipoles(cosmo, k, ds, gal, ds_model, "eft_lite")
-    got = _emulator_predict(cosmo, k, ds, gal, ds_model, "eft_lite")
+    ref = _reference_multipoles(cosmo, k, ds, gal, ds_model, "eft_ct")
+    got = _emulator_predict(cosmo, k, ds, gal, ds_model, "eft_ct")
     np.testing.assert_allclose(got, ref, rtol=1e-10,
         err_msg=f"eft_lite / {ds_model}: emulator vs GL mismatch")
 
@@ -102,8 +102,8 @@ def test_eft_lite_matches_reference(cosmo, k, ds_model):
 def test_eft_full_matches_reference(cosmo, k, ds_model):
     ds = DSSplitBinEFT(label="DS5", bq1=1.5, beta_q=-0.2)
     gal = GalaxyEFTParams(b1=1.6, c0=3.0, s0=200.0)
-    ref = _reference_multipoles(cosmo, k, ds, gal, ds_model, "eft_full")
-    got = _emulator_predict(cosmo, k, ds, gal, ds_model, "eft_full")
+    ref = _reference_multipoles(cosmo, k, ds, gal, ds_model, "eft")
+    got = _emulator_predict(cosmo, k, ds, gal, ds_model, "eft")
     np.testing.assert_allclose(got, ref, rtol=1e-10,
         err_msg=f"eft_full / {ds_model}: emulator vs GL mismatch")
 
@@ -116,8 +116,8 @@ def test_eft_full_matches_reference(cosmo, k, ds_model):
 def test_bq_nabla2_matches_reference(cosmo, k, ds_model):
     ds = DSSplitBinEFT(label="DS2", bq1=0.9, bq_nabla2=0.5, beta_q=0.2)
     gal = GalaxyEFTParams(b1=2.0, c0=4.0)
-    ref = _reference_multipoles(cosmo, k, ds, gal, ds_model, "eft_lite")
-    got = _emulator_predict(cosmo, k, ds, gal, ds_model, "eft_lite")
+    ref = _reference_multipoles(cosmo, k, ds, gal, ds_model, "eft_ct")
+    got = _emulator_predict(cosmo, k, ds, gal, ds_model, "eft_ct")
     np.testing.assert_allclose(got, ref, rtol=1e-10,
         err_msg=f"bq_nabla2 / {ds_model}: emulator vs GL mismatch")
 
@@ -129,8 +129,8 @@ def test_bq_nabla2_matches_reference(cosmo, k, ds_model):
 def test_c2_c4_counterterms_match_reference(cosmo, k):
     ds = DSSplitBinEFT(label="DS3", bq1=0.6)
     gal = GalaxyEFTParams(b1=1.9, c0=2.0, c2=1.0, c4=0.5)
-    ref = _reference_multipoles(cosmo, k, ds, gal, "baseline", "eft_lite")
-    got = _emulator_predict(cosmo, k, ds, gal, "baseline", "eft_lite")
+    ref = _reference_multipoles(cosmo, k, ds, gal, "baseline", "eft_ct")
+    got = _emulator_predict(cosmo, k, ds, gal, "baseline", "eft_ct")
     np.testing.assert_allclose(got, ref, rtol=1e-10,
         err_msg="c2/c4 counterterms: emulator vs GL mismatch")
 
@@ -143,7 +143,7 @@ def test_multi_quantile_ordering(cosmo, k):
     """Two-quantile predict should equal two independent single-quantile calls."""
     em = TemplateEmulator(
         cosmo, k, ells=ELLS, z=Z, R=R,
-        ds_model="phenomenological", mode="eft_lite",
+        ds_model="phenomenological", mode="eft_ct",
     )
     params_multi = {
         "b1": 2.0,
@@ -174,7 +174,7 @@ def test_linearity_in_bq1(cosmo, k):
     """predict is linear in bq1 (tree + EFT contributions both linear in bq1)."""
     em = TemplateEmulator(
         cosmo, k, ells=(0, 2), z=Z, R=R,
-        ds_model="baseline", mode="eft_lite",
+        ds_model="baseline", mode="eft_ct",
     )
     base = {"b1": 1.8, "bq1": [1.0], "c0": 3.0}
     p1 = em.predict(base)
@@ -193,7 +193,7 @@ def test_real_space_ell0_only(cosmo, k):
     """In real space (f=0), monopole should be non-zero but quadrupole zero."""
     em = TemplateEmulator(
         cosmo, k, ells=(0, 2), z=Z, R=R,
-        space="real", ds_model="baseline", mode="tree_only",
+        space="real", ds_model="baseline", mode="tree",
     )
     out = em.predict({"b1": 2.0, "bq1": [1.0]})
     nk = len(k)
@@ -237,13 +237,13 @@ def test_update_cosmology_matches_new_instance(k):
 
     # Reference: fresh emulator at new cosmology
     em_ref = TemplateEmulator(cosmo_new, k, ells=ELLS, z=Z, R=R,
-                              ds_model="baseline", mode="eft_lite")
+                              ds_model="baseline", mode="eft_ct")
     params = {"b1": 2.0, "bq1": [0.5, -1.0], "c0": 3.0}
     pred_ref = em_ref.predict(params)
 
     # Test: old emulator updated in-place
     em_upd = TemplateEmulator(cosmo_old, k, ells=ELLS, z=Z, R=R,
-                              ds_model="baseline", mode="eft_lite")
+                              ds_model="baseline", mode="eft_ct")
     em_upd.update_cosmology(plin_new, f_new)
     pred_upd = em_upd.predict(params)
 

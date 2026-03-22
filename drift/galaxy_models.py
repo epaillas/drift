@@ -6,7 +6,7 @@ from .cosmology import get_linear_power, get_growth_rate
 from .eft_bias import GalaxyEFTParams
 from .one_loop import compute_P22, compute_P13, compute_bias_loops, compute_Pdt_Ptt
 
-_VALID_MODES = ("tree_only", "eft_lite", "eft_full", "one_loop", "one_loop_matter_only")
+_VALID_MODES = ("tree", "eft_ct", "eft", "one_loop")
 
 
 def _fog_term(k, mu, plin, b1, f, sigma_fog):
@@ -70,7 +70,7 @@ def pgg_mu(k, mu, z, cosmo, b1, space="redshift"):
     return plin[:, np.newaxis] * kaiser[np.newaxis, :] ** 2
 
 
-def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_lite",
+def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_ct",
                ir_resum=False):
     """EFT galaxy auto-power spectrum P_gg(k, mu).
 
@@ -82,7 +82,6 @@ def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_lite",
                - 2*k^2*(c0+c2*mu^2+c4*mu^4)*(b1+f*mu^2)*P_lin
     eft_full  : eft_lite + stochastic term  s0 + s2*(k*mu)^2
     one_loop  : complete one-loop EFT (SPT loops + bias + RSD + counterterms + stochastic)
-    one_loop_matter_only : one-loop matter loops only (no bias loops)
 
     Parameters
     ----------
@@ -129,22 +128,15 @@ def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_lite",
             )
             P_real = b1 ** 2 * (plin + loops["p22"] + loops["p13"]) + p_loop_bias
             P = P_real[:, np.newaxis] * np.ones((1, len(mu)))
-        elif mode == "one_loop_matter_only":
-            def plin_func(kk):
-                return get_linear_power(cosmo, np.asarray(kk, dtype=float), z)
-
-            loops = _compute_loop_templates(k, plin_func)
-            P_real = b1 ** 2 * (plin + loops["p22"] + loops["p13"])
-            P = P_real[:, np.newaxis] * np.ones((1, len(mu)))
         else:
             P = (b1 ** 2 * plin)[:, np.newaxis] * np.ones((1, len(mu)))
-        if mode in ("eft_full", "one_loop", "one_loop_matter_only"):
+        if mode in ("eft", "one_loop"):
             P = P + (gal_params.s0 + gal_params.s2 * k ** 2)[:, np.newaxis]
         return P
 
     f = get_growth_rate(cosmo, z)
 
-    if mode == "tree_only":
+    if mode == "tree":
         return pgg_mu(k, mu, z, cosmo, b1, space=space)
 
     kaiser = b1 + f * mu ** 2   # (nmu,)
@@ -170,7 +162,7 @@ def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_lite",
     else:
         P = plin[:, np.newaxis] * kaiser[np.newaxis, :] ** 2
 
-    if mode in ("eft_lite", "eft_full", "one_loop_matter_only"):
+    if mode in ("eft_ct", "eft"):
         c0 = gal_params.c0
         c2 = gal_params.c2
         c4 = gal_params.c4
@@ -182,28 +174,11 @@ def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_lite",
         if gal_params.sigma_fog != 0.0:
             P = P + _fog_term(k, mu, plin, b1, f, gal_params.sigma_fog)
 
-    if mode in ("eft_full", "one_loop_matter_only"):
+    if mode in ("eft"):
         # mu-dependent stochastic: s0 + s2*(k*mu)^2
         P = P + gal_params.s0 + gal_params.s2 * (
             k[:, np.newaxis] * mu[np.newaxis, :]
         ) ** 2
-
-    if mode == "one_loop_matter_only":
-        def plin_func(kk):
-            return get_linear_power(cosmo, np.asarray(kk, dtype=float), z)
-
-        loops = _compute_loop_templates(k, plin_func)
-        p22, p13 = loops["p22"], loops["p13"]
-        p22_dt, p22_tt = loops["p22_dt"], loops["p22_tt"]
-        p13_dt, p13_tt = loops["p13_dt"], loops["p13_tt"]
-
-        # Matter loops only — no bias loops
-        P_dd_loop = b1 ** 2 * (p22 + p13)
-        P_dt_loop = p22_dt + p13_dt
-        P_tt_loop = p22_tt + p13_tt
-        P = P + P_dd_loop[:, np.newaxis]
-        P = P + (2.0 * b1 * f) * mu[np.newaxis, :] ** 2 * P_dt_loop[:, np.newaxis]
-        P = P + f ** 2 * mu[np.newaxis, :] ** 4 * P_tt_loop[:, np.newaxis]
 
     if mode == "one_loop":
         b2  = gal_params.b2

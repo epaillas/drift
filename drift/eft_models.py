@@ -6,7 +6,7 @@ from .kernels import gaussian_kernel, tophat_kernel
 from .eft_bias import DSSplitBinEFT, GalaxyEFTParams
 from .eft_terms import galaxy_counterterm, ds_counterterm, stochastic_term
 
-_VALID_MODES = ("tree_only", "eft_lite", "eft_full")
+_VALID_MODES = ("tree", "eft_ct", "eft", "one_loop")
 _VALID_DS_MODELS = ("baseline", "rsd_selection", "phenomenological")
 
 
@@ -191,7 +191,7 @@ def pqg_eft_mu(
     kernel: str = "gaussian",
     space: str = "redshift",
     ds_model: str = "baseline",
-    mode: str = "eft_lite",
+    mode: str = "eft_ct",
 ) -> np.ndarray:
     """EFT density-split × galaxy cross power spectrum P(k, mu).
 
@@ -219,11 +219,11 @@ def pqg_eft_mu(
         'rsd_selection', or 'phenomenological'.
     mode : str
         EFT mode:
-        - 'tree_only': tree-level only (matches pqg_mu exactly at bq=bq1)
-        - 'eft_lite': tree + galaxy counterterm + DS counterterm (no loop promotion;
+        - 'tree': tree-level only (matches pqg_mu exactly at bq=bq1)
+        - 'eft_ct': tree + galaxy counterterm + DS counterterm (no loop promotion;
           raw SPT P13 is UV-sensitive and cannot be renormalized by the k² counterterm
           basis at the current integration range — see _pqg_one_loop_partial)
-        - 'eft_full': eft_lite + stochastic terms
+        - 'eft': eft_ct + stochastic terms (s0 + s2*k^2)
 
     Returns
     -------
@@ -241,8 +241,88 @@ def pqg_eft_mu(
     wk = _get_kernel(kernel, k, R)         # (nk,)
     f = get_growth_rate(cosmo, z) if space == "redshift" else 0.0
 
-    if mode == "tree_only":
+    if mode == "tree":
         return _pqg_tree_eft(k, mu, plin, wk, f, ds_params, gal_params, ds_model)
+
+    if mode in ("one_loop",):
+        from .galaxy_models import _compute_loop_templates
+        def _plin_func(kk):
+            return get_linear_power(cosmo, np.asarray(kk, dtype=float), z)
+        loops = _compute_loop_templates(k, _plin_func)
+
+        b1 = gal_params.b1
+        bq1 = ds_params.bq1
+        beta_q = ds_params.beta_q
+
+        P_dd_loop = (loops["p22"] + loops["p13"]) * wk
+        P_dt_loop = (loops["p22_dt"] + loops["p13_dt"]) * wk
+
+        # Galaxy-matter cross-spectrum loop coefficients (mu^0 and mu^2)
+        Pgm_l0 = b1 * P_dd_loop
+        Pgm_l2 = f * P_dt_loop
+
+        if mode == "one_loop":
+            b2   = gal_params.b2
+            bs2  = gal_params.bs2
+            b3nl = gal_params.b3nl
+            Pgm_l0 = (Pgm_l0
+                      + (b2 * loops["I12"] + bs2 * loops["J12"] + 2.0 * b3nl * loops["Ib3nl"]) * wk)
+            Pgm_l2 = Pgm_l2 + f * (b2 * loops["I12_v"] + bs2 * loops["J12_v"]) * wk
+
+        # Combined coefficients: A0 (mu^0) + A2 * mu^2
+        A0 = b1 * plin * wk + Pgm_l0   # (nk,)
+        A2 = f  * plin * wk + Pgm_l2   # (nk,)
+
+        # Multiply by DS_factor(mu)
+        if ds_model == "baseline":
+            # DS_factor = bq1
+            P = bq1 * (A0[:, np.newaxis] + A2[:, np.newaxis] * mu[np.newaxis, :]**2)
+        elif ds_model == "rsd_selection":
+            # DS_factor = bq1 * (1 + f*mu^2)
+            P = bq1 * (
+                A0[:, np.newaxis]
+                + (A2[:, np.newaxis] + f * A0[:, np.newaxis]) * mu[np.newaxis, :]**2
+                + f * A2[:, np.newaxis] * mu[np.newaxis, :]**4
+            )
+        else:  # phenomenological
+            # DS_factor = bq1 + beta_q*f*mu^2
+            P = (
+                bq1 * A0[:, np.newaxis]
+                + (bq1 * A2[:, np.newaxis] + beta_q * f * A0[:, np.newaxis]) * mu[np.newaxis, :]**2
+                + beta_q * f * A2[:, np.newaxis] * mu[np.newaxis, :]**4
+            )
+
+        # Galaxy EFT counterterm: -k^2*(c0+c2*mu^2+c4*mu^4) * P_{DS×lin}
+        ds_lin = _pqg_ds_lin(k, mu, plin, wk, f, ds_params, ds_model)
+        P = P + galaxy_counterterm(k, mu, gal_params, ds_lin)
+
+        # DS higher-derivative counterterm
+        ds_normed = DSSplitBinEFT(label=ds_params.label, bq1=1.0)
+        gal_normed = GalaxyEFTParams(b1=gal_params.b1)
+        tree_normed = _pqg_tree_eft(k, mu, plin, wk, f, ds_normed, gal_normed, ds_model)
+        P = P + ds_counterterm(k, mu, plin, ds_params, tree_normed, R)
+
+        # FoG for cross-spectrum: -sigma_fog * k^2*mu^2 * DS_factor * (b1 + f*mu^2) * Plin*W_R
+        sigma_fog = gal_params.sigma_fog
+        if sigma_fog != 0.0:
+            if ds_model == "baseline":
+                ds_factor_2d = bq1 * np.ones((len(k), len(mu)))
+            elif ds_model == "rsd_selection":
+                ds_factor_2d = bq1 * (1.0 + f * mu[np.newaxis, :]**2)
+            else:
+                ds_factor_2d = bq1 + beta_q * f * mu[np.newaxis, :]**2
+            P = P - sigma_fog * (k**2 * plin * wk)[:, np.newaxis] * ds_factor_2d * (
+                b1 * mu[np.newaxis, :]**2 + f * mu[np.newaxis, :]**4
+            )
+
+        # Stochastic: s0 + s2*k^2*mu^2
+        s0 = gal_params.s0
+        s2 = gal_params.s2
+        if s0 != 0.0 or s2 != 0.0:
+            stoch = gal_params.s0 + gal_params.s2 * k[:, np.newaxis]**2 * mu[np.newaxis, :]**2
+            P = P + stoch
+
+        return P
 
     # eft_lite or eft_full: tree + counterterms (no one-loop promotion yet)
     # NOTE: _pqg_one_loop_partial() exists but is intentionally not called here.
@@ -262,7 +342,7 @@ def pqg_eft_mu(
     P = P + galaxy_counterterm(k, mu, gal_params, ds_lin)
     P = P + ds_counterterm(k, mu, plin, ds_params, tree_normed, R)
 
-    if mode == "eft_full":
+    if mode == "eft":
         P = P + stochastic_term(k, mu, gal_params)
 
     return P

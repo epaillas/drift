@@ -40,7 +40,7 @@ BIAS_PARAMS = dict(b1=2.0, c0=5.0, c2=2.0, c4=0.0, s0=100.0, s2=0.0, b2=0.5, bs2
 def parse_args():
     p = argparse.ArgumentParser(description="Test grid emulator accuracy for P_gg")
     p.add_argument("--mode", default="one_loop",
-                   choices=["tree_only", "eft_lite", "eft_full", "one_loop", "one_loop_matter_only"])
+                   choices=["tree", "eft_ct", "eft", "one_loop"])
     p.add_argument("--n-test", type=int, default=50, help="Number of random test cosmologies")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--kmin", type=float, default=0.01)
@@ -60,7 +60,7 @@ def main():
     outdir = Path(__file__).resolve().parents[1] / "outputs" / "emulator_accuracy" / args.mode
     outdir.mkdir(parents=True, exist_ok=True)
 
-    use_one_loop = args.mode in ("one_loop", "one_loop_matter_only")
+    use_one_loop = args.mode in ("one_loop",)
 
     # Resolve free vs fixed cosmo params
     fixed_cosmo = parse_fix_cosmo(args.fix_cosmo)

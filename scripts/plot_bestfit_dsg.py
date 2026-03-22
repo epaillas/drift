@@ -24,7 +24,7 @@ from inference_dsg import _parse_kmax, _build_data_mask, make_direct_theory_mode
 
 SPACE      = "redshift"         # "redshift" | "real"
 DS_MODEL   = "phenomenological" # "baseline" | "rsd_selection" | "phenomenological"
-MODEL_MODE = "eft_full"         # "tree_only" | "eft_lite" | "eft_full"
+MODEL_MODE = "eft"         # "tree" | "eft_ct" | "eft"
 
 _suffix     = "_real" if SPACE == "real" else ""
 CHAINS_PATH = (
@@ -51,16 +51,16 @@ def _build_params(ds_model, model_mode, quantiles, vary_cosmo=False):
     else:
         param_names = ["b1"] + [f"bq1_{q}" for q in quantiles]
         labels      = [r"$b_1$"] + [rf"$b_{{q1,{q}}}$" for q in quantiles]
-    if model_mode in ("eft_lite", "eft_full"):
+    if model_mode in ("eft_ct", "eft"):
         param_names += ["c0"]
         labels      += [r"$c_0$"]
-    if model_mode == "eft_full":
+    if model_mode == "eft":
         param_names += ["s0"]
         labels      += [r"$s_0$"]
     if ds_model == "phenomenological":
         param_names += [f"beta_q_{q}" for q in quantiles]
         labels      += [rf"$\beta_{{q,{q}}}$" for q in quantiles]
-    if model_mode in ("eft_lite", "eft_full"):
+    if model_mode in ("eft_ct", "eft"):
         param_names += [f"bq_nabla2_{q}" for q in quantiles]
         labels      += [rf"$b_{{q\nabla^2,{q}}}$" for q in quantiles]
     return param_names, labels

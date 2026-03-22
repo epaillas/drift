@@ -90,7 +90,7 @@ def main():
     )
     parser.add_argument(
         "--synthetic-mode",
-        choices=["tree_only", "eft_lite", "eft_full", "one_loop", "one_loop_matter_only"],
+        choices=["tree", "eft_ct", "eft", "one_loop"],
         default=None,
         metavar="MODE",
         help=(
@@ -158,13 +158,13 @@ def main():
     cosmo = get_cosmology()
     if args.synthetic:
         synthetic_mode = args.synthetic_mode or MODEL_MODE
-        if synthetic_mode == "tree_only":
+        if synthetic_mode == "tree":
             TRUE_PARAMS = {"b1": 2.0}
-        elif synthetic_mode == "eft_lite":
+        elif synthetic_mode == "eft_ct":
             TRUE_PARAMS = {"b1": 2.0, "c0": 5.0}
-        elif synthetic_mode == "eft_full":
+        elif synthetic_mode == "eft":
             TRUE_PARAMS = {"b1": 2.0, "c0": 5.0, "s0": 100.0}
-        elif synthetic_mode in ("one_loop", "one_loop_matter_only"):
+        elif synthetic_mode in ("one_loop",):
             TRUE_PARAMS = {"b1": 2.0, "c0": 5.0, "c2": 2.0, "c4": 0.0, "s0": 100.0, "s2": 0.0, "b2": 0.5, "bs2": -0.5, "b3nl": 0.1}
         else:
             TRUE_PARAMS = {"b1": 2.0, "c0": 5.0, "c2": 2.0, "c4": 0.0, "s0": 100.0, "s2": 0.0, "b2": 0.5, "bs2": -0.5, "b3nl": 0.1}
@@ -244,9 +244,9 @@ def main():
     if "b2" in all_param_names or "bs2" in all_param_names or "b3nl" in all_param_names:
         chain_mode = "one_loop"
     elif "s0" in all_param_names and "c2" not in all_param_names:
-        chain_mode = "eft_full"
+        chain_mode = "eft"
     elif "c0" in all_param_names and "s0" not in all_param_names:
-        chain_mode = "eft_lite"
+        chain_mode = "eft_ct"
 
     def _bf_model(kk, mu):
         return pgg_eft_mu(

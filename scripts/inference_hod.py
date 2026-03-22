@@ -31,7 +31,7 @@ from inference_dsg import (
 # Constants
 # ---------------------------------------------------------------------------
 DS_MODEL   = "phenomenological" # "baseline" | "rsd_selection" | "phenomenological"
-MODEL_MODE = "eft_full"         # "tree_only" | "eft_lite" | "eft_full"
+MODEL_MODE = "eft"         # "tree" | "eft_ct" | "eft"
 
 MEAS_PATH  = Path(__file__).parents[1] / "outputs" / "hods" / "dsc_pkqg_poles_c000_hod006.h5"
 OUTPUT_DIR = Path(__file__).parents[1] / "outputs" / "inference_hod" / DS_MODEL / MODEL_MODE

@@ -52,7 +52,7 @@ def test_tree_only_matches_pqg_mu(cosmo, k, mu, ds_eft, gal):
     expected = pqg_mu(k, mu, z=0.5, cosmo=cosmo, ds_params=ds_legacy,
                       tracer_bias=gal.b1, R=10.0, ds_model="baseline")
     result = pqg_eft_mu(k, mu, z=0.5, cosmo=cosmo, ds_params=ds_eft,
-                        gal_params=gal, R=10.0, ds_model="baseline", mode="tree_only")
+                        gal_params=gal, R=10.0, ds_model="baseline", mode="tree")
     np.testing.assert_allclose(result, expected, rtol=1e-12)
 
 
@@ -64,9 +64,9 @@ def test_eft_lite_zero_corrections_is_tree(cosmo, k, mu, ds_eft, gal):
     """eft_lite with zero counterterm params should equal tree_only."""
     # gal has c0=c2=c4=0 and ds_eft has bq_nabla2=0 by default
     tree = pqg_eft_mu(k, mu, z=0.5, cosmo=cosmo, ds_params=ds_eft,
-                      gal_params=gal, R=10.0, mode="tree_only")
+                      gal_params=gal, R=10.0, mode="tree")
     lite = pqg_eft_mu(k, mu, z=0.5, cosmo=cosmo, ds_params=ds_eft,
-                      gal_params=gal, R=10.0, mode="eft_lite")
+                      gal_params=gal, R=10.0, mode="eft_ct")
     np.testing.assert_allclose(lite, tree, rtol=1e-12)
 
 
@@ -233,7 +233,7 @@ def test_eft_lite_multipoles_finite(cosmo, k, ds_eft, gal):
         return pqg_eft_mu(
             kk, mu, z=0.5, cosmo=cosmo,
             ds_params=ds_eft, gal_params=gal, R=10.0,
-            mode="eft_lite",
+            mode="eft_ct",
         )
 
     poles = compute_multipoles(k, model, ells=(0, 2, 4))
@@ -249,9 +249,9 @@ def test_eft_lite_perturbative_at_low_k(cosmo, k, mu, ds_eft, gal):
     """eft_lite / tree_only should be close at k < 0.05 (counterterms are small there)."""
     gal_ct = GalaxyEFTParams(b1=gal.b1, c0=5.0)
     tree = pqg_eft_mu(k, mu, z=0.5, cosmo=cosmo, ds_params=ds_eft,
-                      gal_params=gal_ct, R=10.0, mode="tree_only")
+                      gal_params=gal_ct, R=10.0, mode="tree")
     lite = pqg_eft_mu(k, mu, z=0.5, cosmo=cosmo, ds_params=ds_eft,
-                      gal_params=gal_ct, R=10.0, mode="eft_lite")
+                      gal_params=gal_ct, R=10.0, mode="eft_ct")
     k_low = k < 0.05
     if not np.any(k_low):
         pytest.skip("No k < 0.05")
@@ -281,7 +281,7 @@ def test_ds_quadratic_zero_has_no_effect_in_tree_only(cosmo, k, mu, gal):
     ds_b = DSSplitBinEFT(label="B", bq1=0.5, bq2=9.9, bqK2=9.9)
 
     pa = pqg_eft_mu(k, mu, z=0.5, cosmo=cosmo, ds_params=ds_a,
-                    gal_params=gal, R=10.0, mode="tree_only")
+                    gal_params=gal, R=10.0, mode="tree")
     pb = pqg_eft_mu(k, mu, z=0.5, cosmo=cosmo, ds_params=ds_b,
-                    gal_params=gal, R=10.0, mode="tree_only")
+                    gal_params=gal, R=10.0, mode="tree")
     np.testing.assert_allclose(pa, pb, rtol=1e-12)

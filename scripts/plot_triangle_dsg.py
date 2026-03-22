@@ -18,7 +18,7 @@ from getdist import MCSamples, plots
 
 SPACE      = "redshift"         # "redshift" | "real"
 DS_MODEL   = "phenomenological" # "baseline" | "rsd_selection" | "phenomenological"
-MODEL_MODE = "eft_full"         # "tree_only" | "eft_lite" | "eft_full"
+MODEL_MODE = "eft"         # "tree" | "eft_ct" | "eft"
 
 
 def _labels_from_names(param_names):

@@ -27,10 +27,9 @@ def k():
 # Test 1: linear_param_names returns correct sets for each mode
 # --------------------------------------------------------------------------
 @pytest.mark.parametrize("mode, expected", [
-    ("tree_only", []),
-    ("eft_lite", ["c0"]),
-    ("eft_full", ["c0", "s0"]),
-    ("one_loop_matter_only", ["c0", "c2", "c4", "s0", "s2"]),
+    ("tree", []),
+    ("eft_ct", ["c0"]),
+    ("eft", ["c0", "s0"]),
     ("one_loop", ["c0", "c2", "c4", "s0", "s2", "b3nl"]),
 ])
 def test_linear_param_names(cosmo, k, mode, expected):
@@ -41,7 +40,7 @@ def test_linear_param_names(cosmo, k, mode, expected):
 # --------------------------------------------------------------------------
 # Test 2: Decomposition identity: m + T @ alpha == predict(full_params)
 # --------------------------------------------------------------------------
-@pytest.mark.parametrize("mode", ["eft_lite", "eft_full", "one_loop_matter_only", "one_loop"])
+@pytest.mark.parametrize("mode", ["eft_ct", "eft", "one_loop"])
 def test_decomposition_identity(cosmo, k, mode):
     rng = np.random.default_rng(42)
     emu = GalaxyTemplateEmulator(cosmo, k, ells=(0, 2), z=0.5, space="redshift", mode=mode)
@@ -80,7 +79,7 @@ def test_decomposition_identity(cosmo, k, mode):
 # --------------------------------------------------------------------------
 # Test 3: Decomposition identity in real space
 # --------------------------------------------------------------------------
-@pytest.mark.parametrize("mode", ["eft_full", "one_loop"])
+@pytest.mark.parametrize("mode", ["eft", "one_loop"])
 def test_decomposition_identity_real_space(cosmo, k, mode):
     rng = np.random.default_rng(123)
     emu = GalaxyTemplateEmulator(cosmo, k, ells=(0, 2, 4), z=0.5, space="real", mode=mode)
@@ -159,7 +158,7 @@ def test_marginalized_vs_bruteforce(cosmo, k):
     """For eft_lite (only c0 is linear), verify against numerical integration."""
     from scipy.integrate import quad
 
-    mode = "eft_lite"
+    mode = "eft_ct"
     ells = (0, 2)
     emu = GalaxyTemplateEmulator(cosmo, k, ells=ells, z=0.5, space="redshift", mode=mode)
 
@@ -212,7 +211,7 @@ def test_marginalized_vs_bruteforce(cosmo, k):
 # Test 6: tree_only mode has no linear params (decomposition is trivial)
 # --------------------------------------------------------------------------
 def test_tree_only_decomposition(cosmo, k):
-    emu = GalaxyTemplateEmulator(cosmo, k, ells=(0, 2), z=0.5, space="redshift", mode="tree_only")
+    emu = GalaxyTemplateEmulator(cosmo, k, ells=(0, 2), z=0.5, space="redshift", mode="tree")
     m, T = emu.predict_decomposed({"b1": 2.0})
     assert T.shape[1] == 0
     pred = emu.predict({"b1": 2.0})
