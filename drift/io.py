@@ -189,6 +189,23 @@ def diagonal_covariance(data_y, noise_frac=0.05, floor=50.0, rescale=1.0):
     return cov, precision
 
 
+def taylor_cache_key(**kwargs):
+    """Return a short hex hash identifying a Taylor emulator configuration.
+
+    Takes arbitrary key-value pairs, sorts by key, and returns a 12-char
+    SHA-256 hex digest.  Scripts pass whatever config determines their
+    theory function output.
+
+    Returns
+    -------
+    str
+        12-character hexadecimal digest.
+    """
+    parts = [f"{k}={v}" for k, v in sorted(kwargs.items())]
+    key_str = "|".join(parts)
+    return hashlib.sha256(key_str.encode()).hexdigest()[:12]
+
+
 def _mock_cache_key(statistic, ells, rebin, **stat_kwargs):
     """Return a short hex hash identifying a unique mock-loading configuration."""
     parts = [statistic, str(tuple(sorted(ells))), str(rebin)]

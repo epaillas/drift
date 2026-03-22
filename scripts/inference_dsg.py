@@ -18,7 +18,7 @@ from pocomc import Sampler, Prior
 
 from drift.cosmology import get_cosmology, LinearPowerGrid
 from drift.emulator import TemplateEmulator
-from drift.io import load_measurements, diagonal_covariance
+from drift.io import load_measurements, diagonal_covariance, taylor_cache_key
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -159,7 +159,7 @@ def make_eft_theory_model(cosmo, k, ells, quantiles, ds_model, mode,
     def theory(theta):
         p = _unpack_theta(theta, n_bq, mode, ds_model, vary_cosmo=vary_cosmo)
         if vary_cosmo:
-            plin, f = cosmo_grid.predict(p["sigma8"], p["omega_m"])
+            plin, f = cosmo_grid.predict(sigma8=p["sigma8"], Omega_m=p["omega_m"])
             emulator.update_cosmology(plin, f)
         params = {
             "b1": p["b1"],
@@ -269,6 +269,25 @@ def main():
         help="Keep every Nth k-bin when loading measurements (default: 5).",
     )
     parser.add_argument(
+        "--taylor",
+        action="store_true",
+        help="Wrap the theory model in a Taylor expansion emulator for fast evaluation.",
+    )
+    parser.add_argument(
+        "--taylor-order",
+        type=int,
+        default=4,
+        metavar="N",
+        help="Maximum Taylor expansion order (default: 4). Only used with --taylor.",
+    )
+    parser.add_argument(
+        "--taylor-step",
+        type=float,
+        default=0.01,
+        metavar="FRAC",
+        help="Relative step size for finite differences (default: 0.01). Only used with --taylor.",
+    )
+    parser.add_argument(
         "--cov-rescale",
         type=float,
         default=64.0,
@@ -315,26 +334,73 @@ def main():
 
     # 3. Theory model
     print(f"  DS model: {DS_MODEL},  EFT mode: {MODEL_MODE}")
-    cosmo_grid = None
-    if vary_cosmo and not args.no_emulator:
-        print("Precomputing LinearPowerGrid (sigma8 × Omega_m) ...")
-        cosmo_grid = LinearPowerGrid(k, z=Z)
+
+    if args.taylor:
+        from drift.taylor import TaylorEmulator
+        fiducial = {name: 0.5 * (lo + hi) for name, (lo, hi) in zip(PARAM_NAMES, BOUNDS)}
+        cache_hash = taylor_cache_key(
+            ds_model=DS_MODEL, model_mode=MODEL_MODE, space=SPACE, z=Z,
+            ells=ELLS, quantiles=QUANTILES, kmax=str(kmax_dict), rebin=args.rebin,
+            vary_cosmo=vary_cosmo, taylor_order=args.taylor_order,
+            taylor_step=args.taylor_step, fiducial=str(sorted(fiducial.items())),
+            param_names=str(PARAM_NAMES),
+        )
+        cache_path = OUTPUT_DIR / f".taylor_cache_{cache_hash}.npz"
+
+        if cache_path.exists():
+            print(f"Loading cached Taylor emulator from {cache_path} ...")
+            taylor_emu = TaylorEmulator.from_coefficients(cache_path)
+        else:
+            # Build the base theory model (only needed on cache miss)
+            print("Using direct GL quadrature ...")
+            base_theory_fn = make_direct_theory_model(
+                cosmo, k, ells=ELLS,
+                quantiles=QUANTILES, ds_model=DS_MODEL, mode=MODEL_MODE,
+                vary_cosmo=vary_cosmo,
+            )
+            base_theory_masked = lambda theta: base_theory_fn(theta)[mask]
+
+            def _dict_theory(params):
+                theta = np.array([params[name] for name in PARAM_NAMES])
+                return base_theory_masked(theta)
+
+            print(f"Building Taylor emulator (order={args.taylor_order}, step={args.taylor_step}) ...")
+            taylor_emu = TaylorEmulator(
+                _dict_theory, fiducial, order=args.taylor_order,
+                step_sizes=args.taylor_step,
+            )
+            taylor_emu.save_coefficients(cache_path)
+            print(f"  Cached Taylor coefficients to {cache_path}")
+
+        theory_fn_masked = lambda theta: taylor_emu.predict(
+            {name: theta[i] for i, name in enumerate(PARAM_NAMES)}
+        )
         print("  done.")
-    if args.no_emulator:
-        print("Using direct GL quadrature (--no-emulator) ...")
-        theory_fn = make_direct_theory_model(
-            cosmo, k, ells=ELLS,
-            quantiles=QUANTILES, ds_model=DS_MODEL, mode=MODEL_MODE,
-        )
     else:
-        print("Building template emulator ...")
-        theory_fn = make_eft_theory_model(
-            cosmo, k, ells=ELLS,
-            quantiles=QUANTILES, ds_model=DS_MODEL, mode=MODEL_MODE,
-            cosmo_grid=cosmo_grid,
-        )
-    print("  done.")
-    theory_fn_masked = lambda theta: theory_fn(theta)[mask]
+        cosmo_grid = None
+        if vary_cosmo and not args.no_emulator:
+            print("Precomputing LinearPowerGrid (sigma8 × Omega_m) ...")
+            cosmo_grid = LinearPowerGrid(
+                k, z=Z,
+                cosmo_ranges={"sigma8": (0.6, 1.2, 20), "Omega_m": (0.2, 0.5, 20)},
+            )
+            print("  done.")
+        if args.no_emulator:
+            print("Using direct GL quadrature ...")
+            theory_fn = make_direct_theory_model(
+                cosmo, k, ells=ELLS,
+                quantiles=QUANTILES, ds_model=DS_MODEL, mode=MODEL_MODE,
+            )
+        else:
+            print("Building template emulator ...")
+            theory_fn = make_eft_theory_model(
+                cosmo, k, ells=ELLS,
+                quantiles=QUANTILES, ds_model=DS_MODEL, mode=MODEL_MODE,
+                cosmo_grid=cosmo_grid,
+            )
+        print("  done.")
+        theory_fn_masked = lambda theta: theory_fn(theta)[mask]
+
     cov, precision_matrix = diagonal_covariance(data_y_masked, rescale=args.cov_rescale)
 
     # 5. Log-likelihood

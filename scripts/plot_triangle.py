@@ -22,15 +22,22 @@ from getdist import MCSamples, plots
 
 # Planck 2018 true cosmological parameters (AbacusSummit fiducial)
 _TRUE_COSMO = {
-    "sigma8":  _DEFAULT_PARAMS["sigma8"],
-    "Omega_m": _DEFAULT_PARAMS["Omega_m"],
+    "sigma8":    _DEFAULT_PARAMS["sigma8"],
+    "omega_cdm": _DEFAULT_PARAMS["omega_cdm"],
+    "omega_b":   _DEFAULT_PARAMS["omega_b"],
+    "h":         _DEFAULT_PARAMS["h"],
+    "n_s":       _DEFAULT_PARAMS["n_s"],
 }
 
 # Known parameter -> LaTeX mappings
 _LATEX = {
-    "sigma8":  r"\sigma_8",
-    "Omega_m": r"\Omega_m",
-    "b1":      r"b_1",
+    "sigma8":    r"\sigma_8",
+    "omega_cdm": r"\omega_{\rm cdm}",
+    "omega_b":   r"\omega_b",
+    "h":         r"h",
+    "n_s":       r"n_s",
+    "Omega_m":   r"\Omega_m",
+    "b1":        r"b_1",
     "b2":      r"b_2",
     "bs2":     r"b_{s^2}",
     "c0":      r"c_0",

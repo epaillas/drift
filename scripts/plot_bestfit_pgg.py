@@ -18,11 +18,14 @@ import matplotlib.pyplot as plt
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from drift.cosmology import get_cosmology
+from drift.cosmology import (
+    get_cosmology, _DEFAULT_PARAMS, ALL_COSMO_NAMES,
+)
 from drift.io import load_pgg_measurements, mock_covariance, diagonal_covariance
 from drift.synthetic import make_synthetic_pgg
 from inference_pgg import (
     SPACE, MODEL_MODE, MEAS_PATH, COV_DIR, ELLS, Z, VARY_COSMO,
+    parse_fix_cosmo,
 )
 
 CHAINS_PATH = (
@@ -68,7 +71,17 @@ def main():
         "--vary-cosmo",
         action="store_true",
         default=VARY_COSMO,
-        help="Chains include sigma8 and Omega_m as free parameters.",
+        help="Chains include cosmological parameters as free parameters.",
+    )
+    parser.add_argument(
+        "--fix-cosmo",
+        nargs="+",
+        default=None,
+        metavar="PARAM[=VALUE]",
+        help=(
+            "Fixed cosmological parameters (must match inference run). "
+            "Accepts 'name=value' or just 'name' (uses Planck 2018 default)."
+        ),
     )
     parser.add_argument(
         "--synthetic",
@@ -94,10 +107,52 @@ def main():
     samples = d["samples"]
     logl    = d["logl"]
     param_names = list(d["param_names"])
-    theta_bf = samples[np.argmax(logl)]
-    print("Best-fit parameters:")
-    for name, val in zip(param_names, theta_bf):
-        print(f"  {name}: {val:.4f}")
+    best_idx = np.argmax(logl)
+    theta_bf = samples[best_idx]
+
+    # Detect marginalized chains and merge linear params
+    is_marginalized = "linear_param_names" in d
+    if is_marginalized:
+        linear_param_names = list(d["linear_param_names"])
+        linear_samples = d["linear_samples"]
+        linear_bf = linear_samples[best_idx]
+        print("Best-fit parameters (nonlinear, sampled):")
+        for name, val in zip(param_names, theta_bf):
+            print(f"  {name}: {val:.4f}")
+        print("Best-fit parameters (linear, recovered):")
+        for name, val in zip(linear_param_names, linear_bf):
+            print(f"  {name}: {val:.4f}")
+    else:
+        print("Best-fit parameters:")
+        for name, val in zip(param_names, theta_bf):
+            print(f"  {name}: {val:.4f}")
+
+    # Detect free cosmo params from chain
+    cosmo_param_names = [n for n in param_names if n in ALL_COSMO_NAMES]
+
+    # Build fixed cosmo: from --fix-cosmo CLI + defaults for non-free params
+    fixed_cosmo = parse_fix_cosmo(args.fix_cosmo)
+    # Also try to read from chains file if available
+    if "fixed_cosmo" in d:
+        for entry in d["fixed_cosmo"]:
+            entry = str(entry)
+            if "=" in entry:
+                name, val = entry.split("=", 1)
+                if name not in fixed_cosmo:
+                    fixed_cosmo[name] = float(val)
+
+    # Fill defaults for any param not free and not explicitly fixed
+    for name in ALL_COSMO_NAMES:
+        if name not in cosmo_param_names and name not in fixed_cosmo:
+            fixed_cosmo[name] = _DEFAULT_PARAMS[name]
+
+    # Build full cosmo dict for best-fit
+    bf_dict = dict(zip(param_names, theta_bf))
+    if is_marginalized:
+        bf_dict.update(dict(zip(linear_param_names, linear_bf)))
+    cosmo_for_bf = dict(fixed_cosmo)
+    for name in cosmo_param_names:
+        cosmo_for_bf[name] = bf_dict[name]
 
     # Load measurements (or generate synthetic data)
     cosmo = get_cosmology()
@@ -110,9 +165,9 @@ def main():
         elif synthetic_mode == "eft_full":
             TRUE_PARAMS = {"b1": 2.0, "c0": 5.0, "s0": 100.0}
         elif synthetic_mode in ("one_loop", "one_loop_matter_only"):
-            TRUE_PARAMS = {"b1": 2.0, "c0": 5.0, "c2": 2.0, "s0": 100.0, "b2": 0.5, "bs2": -0.5, "b3nl": 0.1}
+            TRUE_PARAMS = {"b1": 2.0, "c0": 5.0, "c2": 2.0, "c4": 0.0, "s0": 100.0, "s2": 0.0, "b2": 0.5, "bs2": -0.5, "b3nl": 0.1}
         else:
-            TRUE_PARAMS = {"b1": 2.0, "c0": 5.0, "c2": 2.0, "s0": 100.0, "b2": 0.5, "bs2": -0.5, "b3nl": 0.1}
+            TRUE_PARAMS = {"b1": 2.0, "c0": 5.0, "c2": 2.0, "c4": 0.0, "s0": 100.0, "s2": 0.0, "b2": 0.5, "bs2": -0.5, "b3nl": 0.1}
         k = np.linspace(0.01, 0.3, 30)
         print(f"Generating synthetic P_gg data vector (mode={synthetic_mode}) ...")
         data_y, _ = make_synthetic_pgg(
@@ -167,12 +222,8 @@ def main():
     from drift.galaxy_models import pgg_eft_mu
     from drift.multipoles import compute_multipoles
 
-    bf_dict = dict(zip(param_names, theta_bf))
-    vary_cosmo = "sigma8" in param_names and "Omega_m" in param_names
-    eval_cosmo = (
-        get_cosmology({"sigma8": bf_dict["sigma8"], "Omega_m": bf_dict["Omega_m"]})
-        if vary_cosmo else cosmo
-    )
+    vary_cosmo = len(cosmo_param_names) > 0
+    eval_cosmo = get_cosmology(cosmo_for_bf) if vary_cosmo else cosmo
     gal = GalaxyEFTParams(
         b1=bf_dict.get("b1", 1.0),
         c0=bf_dict.get("c0", 0.0),
@@ -186,12 +237,15 @@ def main():
     )
 
     # Detect the model mode from the chain's parameter set
+    all_param_names = list(param_names)
+    if is_marginalized:
+        all_param_names += linear_param_names
     chain_mode = MODEL_MODE
-    if "b2" in param_names or "bs2" in param_names or "b3nl" in param_names:
+    if "b2" in all_param_names or "bs2" in all_param_names or "b3nl" in all_param_names:
         chain_mode = "one_loop"
-    elif "s0" in param_names and "c2" not in param_names:
+    elif "s0" in all_param_names and "c2" not in all_param_names:
         chain_mode = "eft_full"
-    elif "c0" in param_names and "s0" not in param_names:
+    elif "c0" in all_param_names and "s0" not in all_param_names:
         chain_mode = "eft_lite"
 
     def _bf_model(kk, mu):
@@ -214,6 +268,10 @@ def main():
     param_str = "  ".join(
         f"{name}={val:.3f}" for name, val in zip(param_names, theta_bf)
     )
+    if is_marginalized:
+        param_str += "  |  " + "  ".join(
+            f"{name}={val:.3f}" for name, val in zip(linear_param_names, linear_bf)
+        )
 
     # Plot
     fig, axes = plt.subplots(1, len(ELLS), figsize=(6 * len(ELLS), 5))

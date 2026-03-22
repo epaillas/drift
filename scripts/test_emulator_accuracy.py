@@ -17,8 +17,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 
-from drift.cosmology import get_cosmology, LinearPowerGrid, OneLoopPowerGrid
+from drift.cosmology import (
+    get_cosmology, LinearPowerGrid, OneLoopPowerGrid,
+    _DEFAULT_PARAMS, DEFAULT_COSMO_RANGES, ALL_COSMO_NAMES,
+)
 from drift.galaxy_emulator import GalaxyTemplateEmulator
+from inference_pgg import parse_fix_cosmo
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -42,6 +46,8 @@ def parse_args():
     p.add_argument("--kmin", type=float, default=0.01)
     p.add_argument("--kmax", type=float, default=0.3)
     p.add_argument("--nk", type=int, default=60)
+    p.add_argument("--fix-cosmo", nargs="+", default=None, metavar="PARAM[=VALUE]",
+                   help="Fix cosmological parameters (same syntax as inference_pgg.py).")
     return p.parse_args()
 
 
@@ -56,28 +62,48 @@ def main():
 
     use_one_loop = args.mode in ("one_loop", "one_loop_matter_only")
 
+    # Resolve free vs fixed cosmo params
+    fixed_cosmo = parse_fix_cosmo(args.fix_cosmo)
+    free_cosmo_names = [name for name in ALL_COSMO_NAMES if name not in fixed_cosmo]
+    # Fill defaults for fixed params not explicitly given
+    for name in ALL_COSMO_NAMES:
+        if name not in fixed_cosmo and name not in free_cosmo_names:
+            fixed_cosmo[name] = _DEFAULT_PARAMS[name]
+
+    cosmo_ranges = {name: DEFAULT_COSMO_RANGES[name] for name in free_cosmo_names}
+
+    print(f"Free cosmo params: {free_cosmo_names}")
+    if fixed_cosmo:
+        print(f"Fixed cosmo params: {fixed_cosmo}")
+
     # --- Build cosmology grid ---
     print(f"Building {'OneLoopPowerGrid' if use_one_loop else 'LinearPowerGrid'} "
-          f"for mode={args.mode} ...")
+          f"for mode={args.mode} ({len(free_cosmo_names)}D) ...")
     if use_one_loop:
-        grid = OneLoopPowerGrid(k, Z)
+        grid = OneLoopPowerGrid(k, Z, cosmo_ranges=cosmo_ranges, fixed_params=fixed_cosmo)
     else:
-        grid = LinearPowerGrid(k, Z)
+        grid = LinearPowerGrid(k, Z, cosmo_ranges=cosmo_ranges, fixed_params=fixed_cosmo)
 
     # Grid bounds (slightly inset to avoid boundary artifacts)
-    s8_lo, s8_hi = grid._s8_range
-    om_lo, om_hi = grid._om_range
-    margin_s8 = 0.05 * (s8_hi - s8_lo)
-    margin_om = 0.05 * (om_hi - om_lo)
+    axis_bounds = {}
+    for i, name in enumerate(grid._axis_names):
+        lo, hi = grid._axis_values[i][0], grid._axis_values[i][-1]
+        margin = 0.05 * (hi - lo)
+        axis_bounds[name] = (lo + margin, hi - margin)
 
     # --- Sample random test cosmologies ---
     rng = np.random.default_rng(args.seed)
-    test_s8 = rng.uniform(s8_lo + margin_s8, s8_hi - margin_s8, args.n_test)
-    test_om = rng.uniform(om_lo + margin_om, om_hi - margin_om, args.n_test)
+    n_free = len(free_cosmo_names)
+    test_cosmo = {}
+    for name in free_cosmo_names:
+        lo, hi = axis_bounds[name]
+        test_cosmo[name] = rng.uniform(lo, hi, args.n_test)
 
     # --- Reference emulator (will be rebuilt per cosmology for exact path) ---
-    # Build one grid-path emulator that we update
-    ref_cosmo = get_cosmology({"sigma8": float(test_s8[0]), "Omega_m": float(test_om[0])})
+    first_params = dict(fixed_cosmo)
+    for name in free_cosmo_names:
+        first_params[name] = float(test_cosmo[name][0])
+    ref_cosmo = get_cosmology(first_params)
     emu_grid = GalaxyTemplateEmulator(ref_cosmo, k, ells=ELLS, z=Z, space=SPACE, mode=args.mode)
 
     # --- Compare grid vs exact ---
@@ -90,8 +116,12 @@ def main():
 
     print(f"Testing {args.n_test} random cosmologies ...")
     for i in range(args.n_test):
-        s8, om = float(test_s8[i]), float(test_om[i])
-        cosmo_params = {"sigma8": s8, "Omega_m": om}
+        cosmo_params = dict(fixed_cosmo)
+        grid_kw = {}
+        for name in free_cosmo_names:
+            val = float(test_cosmo[name][i])
+            cosmo_params[name] = val
+            grid_kw[name] = val
 
         # Exact path: fresh emulator from CLASS
         cosmo_exact = get_cosmology(cosmo_params)
@@ -100,10 +130,10 @@ def main():
 
         # Grid path: interpolate then update
         if use_one_loop:
-            plin, f, loop_arrays = grid.predict(s8, om)
+            plin, f, loop_arrays = grid.predict(**grid_kw)
             emu_grid.update_cosmology(plin, f, loop_arrays=loop_arrays)
         else:
-            plin, f = grid.predict(s8, om)
+            plin, f = grid.predict(**grid_kw)
             emu_grid.update_cosmology(plin, f)
         p_grid = emu_grid.predict(BIAS_PARAMS)
 
@@ -117,12 +147,14 @@ def main():
         mean_errors[i] = np.mean(frac_err)
 
         if (i + 1) % 10 == 0 or i == 0:
-            print(f"  [{i+1:3d}/{args.n_test}] sigma8={s8:.4f} Omega_m={om:.4f} "
+            param_str = "  ".join(f"{name}={cosmo_params[name]:.4f}" for name in free_cosmo_names)
+            print(f"  [{i+1:3d}/{args.n_test}] {param_str} "
                   f"max_err={max_errors[i]:.2e} mean_err={mean_errors[i]:.2e}")
 
     # --- Summary statistics ---
     print("\n" + "=" * 60)
-    print(f"SUMMARY  (mode={args.mode}, n_test={args.n_test})")
+    print(f"SUMMARY  (mode={args.mode}, n_test={args.n_test}, "
+          f"free={free_cosmo_names})")
     print("=" * 60)
     print(f"  Max fractional error:    {np.max(max_errors):.4e}")
     print(f"  Median max error:        {np.median(max_errors):.4e}")
@@ -131,21 +163,23 @@ def main():
     print("=" * 60)
 
     # --- Save results ---
-    np.savez(
-        outdir / "accuracy_results.npz",
+    save_dict = dict(
         k=k, ells=np.array(ELLS),
-        test_sigma8=test_s8, test_omega_m=test_om,
         all_exact=all_exact, all_grid=all_grid,
         max_errors=max_errors, mean_errors=mean_errors,
+        free_cosmo_names=np.array(free_cosmo_names),
     )
+    for name in free_cosmo_names:
+        save_dict[f"test_{name}"] = test_cosmo[name]
+    np.savez(outdir / "accuracy_results.npz", **save_dict)
     print(f"\nResults saved to {outdir / 'accuracy_results.npz'}")
 
     # --- Plots ---
     _plot_frac_error_vs_k(k, all_exact, all_grid, ELLS, outdir)
     _plot_max_error_histogram(max_errors, outdir)
-    _plot_error_heatmap(test_s8, test_om, max_errors, grid, outdir)
+    _plot_max_error_strip(test_cosmo, free_cosmo_names, max_errors, outdir)
     _plot_example_comparisons(k, all_exact, all_grid, max_errors,
-                              test_s8, test_om, ELLS, outdir)
+                              test_cosmo, free_cosmo_names, ELLS, outdir)
     print(f"Plots saved to {outdir}/")
 
 
@@ -204,33 +238,27 @@ def _plot_max_error_histogram(max_errors, outdir):
     plt.close(fig)
 
 
-def _plot_error_heatmap(test_s8, test_om, max_errors, grid, outdir):
-    """Scatter in (sigma8, Omega_m) colored by max error, grid nodes overlaid."""
-    fig, ax = plt.subplots(figsize=(6, 5))
-    sc = ax.scatter(test_om, test_s8, c=max_errors, cmap="viridis",
-                    edgecolors="k", linewidths=0.3, s=40, zorder=5)
-    plt.colorbar(sc, ax=ax, label="Max fractional error")
+def _plot_max_error_strip(test_cosmo, free_cosmo_names, max_errors, outdir):
+    """Strip chart: max error vs each free cosmo param."""
+    n_free = len(free_cosmo_names)
+    if n_free == 0:
+        return
 
-    # Overlay grid nodes
-    s8_lo, s8_hi = grid._s8_range
-    om_lo, om_hi = grid._om_range
-    # Recover grid node positions from the interpolator
-    s8_nodes = grid._plin_interp.grid[0]
-    om_nodes = grid._plin_interp.grid[1]
-    om_grid, s8_grid = np.meshgrid(om_nodes, s8_nodes)
-    ax.scatter(om_grid.ravel(), s8_grid.ravel(), marker="+", color="red",
-               s=20, alpha=0.5, zorder=4, label="Grid nodes")
+    fig, axes = plt.subplots(1, n_free, figsize=(4 * n_free, 4), squeeze=False)
+    for i, name in enumerate(free_cosmo_names):
+        ax = axes[0, i]
+        ax.scatter(test_cosmo[name], max_errors, s=15, alpha=0.6, edgecolors="k", linewidths=0.3)
+        ax.set_xlabel(name)
+        ax.set_ylabel("Max fractional error")
+        ax.set_yscale("log")
 
-    ax.set_xlabel(r"$\Omega_m$")
-    ax.set_ylabel(r"$\sigma_8$")
-    ax.legend(fontsize=8)
     fig.tight_layout()
-    fig.savefig(outdir / "error_heatmap.png", dpi=150)
+    fig.savefig(outdir / "error_strip.png", dpi=150)
     plt.close(fig)
 
 
 def _plot_example_comparisons(k, all_exact, all_grid, max_errors,
-                              test_s8, test_om, ells, outdir):
+                              test_cosmo, free_cosmo_names, ells, outdir):
     """k*P_ell for worst/median/best cosmology, grid vs exact + residual."""
     n_ells = len(ells)
     nk = len(k)
@@ -267,8 +295,10 @@ def _plot_example_comparisons(k, all_exact, all_grid, max_errors,
             residual = (grid_val - exact) / np.maximum(np.abs(exact), floor)
             ax_bot.plot(k, residual, color=color, lw=1)
 
-        ax_top.set_title(f"{label} (err={max_errors[idx]:.2e})\n"
-                         rf"$\sigma_8$={test_s8[idx]:.3f}, $\Omega_m$={test_om[idx]:.3f}",
+        param_str = ", ".join(
+            f"{name}={test_cosmo[name][idx]:.3f}" for name in free_cosmo_names
+        )
+        ax_top.set_title(f"{label} (err={max_errors[idx]:.2e})\n{param_str}",
                          fontsize=9)
         ax_top.set_ylabel(r"$k \, P_\ell(k)$")
         ax_top.tick_params(labelbottom=False)

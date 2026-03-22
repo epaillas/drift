@@ -45,6 +45,12 @@ class GalaxyEFTParams:
         Tidal galaxy bias. Default 0.
     b3nl : float
         Non-local cubic galaxy bias. Default 0.
+    sigma_fog : float
+        Finger-of-God damping coefficient [(Mpc/h)^2]. Multiplies the
+        leading-order FoG expansion of the Kaiser term:
+        ``-sigma_fog * k^2 * P_lin * [b1^2*mu^2 + 2*b1*f*mu^4 + f^2*mu^6]``.
+        Physically, ``sigma_fog ~ sigma_v^2`` where sigma_v is the 1D pairwise
+        velocity dispersion. Default 0.
     c0 : float
         Isotropic EFT counterterm coefficient [(Mpc/h)^2]. Default 0.
     c2 : float
@@ -61,6 +67,7 @@ class GalaxyEFTParams:
     b2: float = 0.0
     bs2: float = 0.0
     b3nl: float = 0.0
+    sigma_fog: float = 0.0
     c0: float = 0.0
     c2: float = 0.0
     c4: float = 0.0

@@ -145,7 +145,8 @@ class GalaxyTemplateEmulator:
     # Core analytic projection
     # ------------------------------------------------------------------
 
-    def _pole(self, b1, c0, c2, c4, s0, s2, ell, b2=0.0, bs2=0.0, b3nl=0.0):
+    def _pole(self, b1, c0, c2, c4, s0, s2, ell, b2=0.0, bs2=0.0, b3nl=0.0,
+              sigma_fog=0.0):
         """Analytic Legendre multipole P_ell(k) for the galaxy auto-spectrum.
 
         Parameters
@@ -157,6 +158,8 @@ class GalaxyTemplateEmulator:
         s0, s2 : float
             Stochastic amplitude parameters (eft_full; default 0).
         ell : int
+        sigma_fog : float
+            FoG damping coefficient [(Mpc/h)^2]. Default 0.
 
         Returns
         -------
@@ -190,6 +193,11 @@ class GalaxyTemplateEmulator:
             cm2 = cm2 - 2.0 * (b1 * c2 + f * c0) * k2A
             cm4 = cm4 - 2.0 * (b1 * c4 + f * c2) * k2A
             cm6 = cm6 - 2.0 * f * c4 * k2A
+            # ---- FoG damping: -sigma_fog * k^2*P_lin * (b1 + f*mu^2)^2 ----
+            if sigma_fog != 0.0:
+                cm2 = cm2 - sigma_fog * b1 ** 2 * k2A
+                cm4 = cm4 - sigma_fog * 2.0 * b1 * f * k2A
+                cm6 = cm6 - sigma_fog * f ** 2 * k2A
 
         # ---- One-loop matter-only corrections ----
         if self.mode == "one_loop_matter_only":
@@ -240,6 +248,112 @@ class GalaxyTemplateEmulator:
     # Public interface
     # ------------------------------------------------------------------
 
+    @property
+    def linear_param_names(self):
+        """Return list of linear parameter names for the current mode."""
+        if self.mode == "tree_only":
+            return []
+        elif self.mode == "eft_lite":
+            return ["c0"]
+        elif self.mode == "eft_full":
+            return ["c0", "s0"]
+        elif self.mode == "one_loop_matter_only":
+            return ["c0", "c2", "c4", "s0", "s2"]
+        elif self.mode == "one_loop":
+            return ["c0", "c2", "c4", "s0", "s2", "b3nl"]
+        return []
+
+    def _template_pole(self, b1, ell, b2=0.0, bs2=0.0):
+        """Return template vectors for each linear parameter at a given multipole.
+
+        Returns a dict mapping linear param names to their template vectors
+        (shape (nk,) each).
+        """
+        M0 = _M[ell][0]
+        M2 = _M[ell][2]
+        M4 = _M[ell][4]
+        M6 = _M[ell][6]
+        f = self.f
+        k2A = self._T_k2Plin
+        k2 = self._T_k2
+        nk = len(self.k)
+
+        templates = {}
+
+        if self.mode == "tree_only":
+            return templates
+
+        # c0: -2 * k^2 * P_lin * (b1*M0 + f*M2)
+        # comes from the mu^0 and mu^2 terms in the counterterm expansion
+        # After Legendre projection: -2*(b1*M0 + f*M2) * k^2*P_lin
+        # But we also get contributions from c0 in higher mu powers:
+        # mu^2 term has -2*f*c0, so full template for c0 is:
+        # M0*(-2*b1*k2A) + M2*(-2*f*k2A)
+        templates["c0"] = M0 * (-2.0 * b1 * k2A) + M2 * (-2.0 * f * k2A)
+
+        if self.mode in ("one_loop", "one_loop_matter_only"):
+            # c2: appears in mu^2 (-2*b1*c2) and mu^4 (-2*f*c2)
+            templates["c2"] = M2 * (-2.0 * b1 * k2A) + M4 * (-2.0 * f * k2A)
+            # c4: appears in mu^4 (-2*b1*c4) and mu^6 (-2*f*c4)
+            templates["c4"] = M4 * (-2.0 * b1 * k2A) + M6 * (-2.0 * f * k2A)
+
+        if self.mode in ("eft_full", "one_loop", "one_loop_matter_only"):
+            # s0: stochastic constant
+            if self.space == "real":
+                templates["s0"] = M0 * np.ones(nk) + M2 * np.zeros(nk)
+            else:
+                templates["s0"] = M0 * np.ones(nk)
+            # s2: stochastic k^2 term
+            if self.space == "real":
+                templates["s2"] = M0 * k2
+            else:
+                templates["s2"] = M2 * k2
+
+        if self.mode == "one_loop":
+            # b3nl: 4*b1*Ib3nl, enters at mu^0 only
+            templates["b3nl"] = M0 * (4.0 * b1 * self._T_Ib3nl)
+
+        return templates
+
+    def predict_decomposed(self, params: dict):
+        """Decompose theory into nonlinear piece m and template matrix T.
+
+        Parameters
+        ----------
+        params : dict
+            Must contain nonlinear params: 'b1', and 'b2', 'bs2' for one_loop.
+
+        Returns
+        -------
+        m : np.ndarray, shape (n_ells * nk,)
+            Model with all linear params set to 0.
+        T : np.ndarray, shape (n_ells * nk, n_linear)
+            Template matrix for linear parameters.
+        """
+        b1        = float(params.get("b1", 1.0))
+        sigma_fog = float(params.get("sigma_fog", 0.0))
+        b2        = float(params.get("b2", 0.0))
+        bs2       = float(params.get("bs2", 0.0))
+
+        lin_names = self.linear_param_names
+        nk = len(self.k)
+        n_linear = len(lin_names)
+
+        # m: model with all linear params = 0 (sigma_fog is nonlinear, kept via params copy)
+        zero_params = dict(params)
+        for name in lin_names:
+            zero_params[name] = 0.0
+        m = self.predict(zero_params)
+
+        # T: template matrix
+        T = np.zeros((len(self.ells) * nk, n_linear))
+        for i_ell, ell in enumerate(self.ells):
+            templates = self._template_pole(b1, ell, b2=b2, bs2=bs2)
+            for j, name in enumerate(lin_names):
+                T[i_ell * nk:(i_ell + 1) * nk, j] = templates[name]
+
+        return m, T
+
     def predict(self, params: dict) -> np.ndarray:
         """Evaluate theory multipoles for all requested ells.
 
@@ -252,6 +366,8 @@ class GalaxyTemplateEmulator:
                 EFT counterterm coefficients (default 0).
             ``'s0'``, ``'s2'`` : float, optional
                 Stochastic amplitude parameters (eft_full; default 0).
+            ``'sigma_fog'`` : float, optional
+                FoG damping coefficient [(Mpc/h)^2] (default 0).
             ``'b2'``, ``'bs2'`` : float, optional
                 Quadratic and tidal bias (one_loop; default 0).
             ``'b3nl'`` : float, optional
@@ -262,18 +378,20 @@ class GalaxyTemplateEmulator:
         np.ndarray, shape (n_ells * nk,)
             Flat data vector ordered as ``[ell0_k0..kN, ell2_k0..kN, ...]``.
         """
-        b1   = float(params["b1"])
-        c0   = float(params.get("c0", 0.0))
-        c2   = float(params.get("c2", 0.0))
-        c4   = float(params.get("c4", 0.0))
-        s0   = float(params.get("s0", 0.0))
-        s2   = float(params.get("s2", 0.0))
-        b2   = float(params.get("b2", 0.0))
-        bs2  = float(params.get("bs2", 0.0))
-        b3nl = float(params.get("b3nl", 0.0))
+        b1        = float(params["b1"])
+        sigma_fog = float(params.get("sigma_fog", 0.0))
+        c0        = float(params.get("c0", 0.0))
+        c2        = float(params.get("c2", 0.0))
+        c4        = float(params.get("c4", 0.0))
+        s0        = float(params.get("s0", 0.0))
+        s2        = float(params.get("s2", 0.0))
+        b2        = float(params.get("b2", 0.0))
+        bs2       = float(params.get("bs2", 0.0))
+        b3nl      = float(params.get("b3nl", 0.0))
 
         pieces = []
         for ell in self.ells:
             pieces.append(self._pole(b1, c0, c2, c4, s0, s2, ell,
-                                     b2=b2, bs2=bs2, b3nl=b3nl))
+                                     b2=b2, bs2=bs2, b3nl=b3nl,
+                                     sigma_fog=sigma_fog))
         return np.concatenate(pieces)

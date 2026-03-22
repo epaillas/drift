@@ -9,6 +9,15 @@ from .one_loop import compute_P22, compute_P13, compute_bias_loops, compute_Pdt_
 _VALID_MODES = ("tree_only", "eft_lite", "eft_full", "one_loop", "one_loop_matter_only")
 
 
+def _fog_term(k, mu, plin, b1, f, sigma_fog):
+    """Leading-order FoG damping: -sigma_fog * k^2*P_lin * (b1+f*mu^2)^2."""
+    return -sigma_fog * (k ** 2 * plin)[:, np.newaxis] * (
+        b1 ** 2 * mu[np.newaxis, :] ** 2
+        + 2.0 * b1 * f * mu[np.newaxis, :] ** 4
+        + f ** 2 * mu[np.newaxis, :] ** 6
+    )
+
+
 def _compute_loop_templates(k, plin_func):
     """Compute all one-loop arrays needed for the one_loop mode.
 
@@ -170,6 +179,8 @@ def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_lite",
             -2.0 * k ** 2 * plin
         )[:, np.newaxis] * ct_shape[np.newaxis, :] * kaiser[np.newaxis, :]
         P = P + counterterm
+        if gal_params.sigma_fog != 0.0:
+            P = P + _fog_term(k, mu, plin, b1, f, gal_params.sigma_fog)
 
     if mode in ("eft_full", "one_loop_matter_only"):
         # mu-dependent stochastic: s0 + s2*(k*mu)^2
@@ -243,6 +254,8 @@ def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_lite",
             -2.0 * k ** 2 * plin
         )[:, np.newaxis] * ct_shape[np.newaxis, :] * kaiser[np.newaxis, :]
         P = P + counterterm
+        if gal_params.sigma_fog != 0.0:
+            P = P + _fog_term(k, mu, plin, b1, f, gal_params.sigma_fog)
 
         # mu-dependent stochastic: s0 + s2*(k*mu)^2
         P = P + gal_params.s0 + gal_params.s2 * (

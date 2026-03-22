@@ -14,6 +14,8 @@ from .ir_resummation import (
     compute_sigma_dd,
     ir_damping,
 )
+from .taylor import TaylorEmulator
+from .analytic_marginalization import MarginalizedLikelihood
 
 __all__ = [
     "DSSplitBin",
@@ -41,4 +43,6 @@ __all__ = [
     "split_wiggle_nowiggle",
     "compute_sigma_dd",
     "ir_damping",
+    "TaylorEmulator",
+    "MarginalizedLikelihood",
 ]
