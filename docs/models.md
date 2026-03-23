@@ -164,7 +164,7 @@ where $P_{q \times \mathrm{lin}}(k, \mu)$ is the tree-level DS × linear matter 
 
 $$P_{ct}^{DS}(k, \mu) = b_{q,\nabla^2}\, (kR)^2\, \tilde{P}_{qg}^\mathrm{tree}(k, \mu)$$
 
-where $\tilde{P}_{qg}^\mathrm{tree}$ is the tree-level model evaluated with $b_{q1} = 1$ (angular shape factor only).
+where $\tilde{P}_{qg}^\mathrm{tree}$ is the tree-level model evaluated with $b_{q1} = 1$, while preserving the selected DS angular prescription. For `phenomenological`, this means the $\beta_q f\mu^2$ anisotropy is retained.
 
 #### `mode="eft"`
 
@@ -194,7 +194,7 @@ $$- \sigma_\mathrm{FoG}\, k^2 P_\mathrm{lin} W_R \cdot \mathrm{DS\text{-}factor}
 
 $$+ s_0 + s_2\, k^2\mu^2$$
 
-> **Note:** The `bq2` and `bqK2` quadratic DS bias terms in `one_loop` mode are not yet implemented and will raise `NotImplementedError` if set to non-zero values.
+> **Note:** The `bq2` and `bqK2` quadratic DS bias terms in `one_loop` mode are not implemented. The code raises `NotImplementedError` if either is set to a non-zero value.
 
 ### Parameter table for $P_{qg}$
 
@@ -222,7 +222,7 @@ $$+ s_0 + s_2\, k^2\mu^2$$
 
 ### $P_{22}$ — two-field loop
 
-$$P_{22}(k) = \frac{1}{4\pi^2} \int_0^\infty dq \int_{-1}^{1} d\mu_q\; q^3\, P_\mathrm{lin}(q)\, P_\mathrm{lin}(|\mathbf{k}-\mathbf{q}|)\, \left[F_2(\mathbf{q}, \mathbf{k}-\mathbf{q})\right]^2$$
+$$P_{22}(k) = \frac{1}{4\pi^2} \int_0^\infty dq \int_{-1}^{1} d\mu_q\; 2q^3\, P_\mathrm{lin}(q)\, P_\mathrm{lin}(|\mathbf{k}-\mathbf{q}|)\, \left[F_2(\mathbf{q}, \mathbf{k}-\mathbf{q})\right]^2$$
 
 using the SPT $F_2$ kernel:
 
@@ -290,6 +290,6 @@ The matrix $\mathbf{A}$ (of size $n_\mathrm{lin} \times n_\mathrm{lin}$) is solv
 | Mode | Loop order | Counterterms | Stochastic | FoG | Bias params |
 |---|---|---|---|---|---|
 | `tree` | none | — | — | — | $b_1$ (and $b_{q1}$, $\beta_q$) |
-| `eft_ct` | none | $c_0, c_2, c_4$; $b_{q,\nabla^2}$ | — | $\sigma_\mathrm{FoG}$ | $b_1$ |
-| `eft` | none | same as above | $s_0$, $s_2$ | $\sigma_\mathrm{FoG}$ | $b_1$ |
-| `one_loop` | 1-loop SPT | same as above | $s_0$, $s_2$ | $\sigma_\mathrm{FoG}$ | $b_1, b_2, b_{s^2}, b_{3\mathrm{nl}}$ |
+| `eft_ct` | none | $c_0, c_2, c_4$; $b_{q,\nabla^2}$ | — | $P_{gg}$ only | $b_1$ |
+| `eft` | none | same as above | $s_0$, $s_2$ | $P_{gg}$ only | $b_1$ |
+| `one_loop` | 1-loop SPT | same as above | $s_0$, $s_2$ | $P_{gg}$ and $P_{qg}$ | $b_1, b_2, b_{s^2}, b_{3\mathrm{nl}}$ |
