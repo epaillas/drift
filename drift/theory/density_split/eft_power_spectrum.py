@@ -21,7 +21,7 @@ def _get_kernel(kernel: str, k: np.ndarray, R: float) -> np.ndarray:
         raise ValueError(f"Unknown kernel '{kernel}'. Choose 'gaussian' or 'tophat'.")
 
 
-def _density_split_galaxy_tree_eft_power_spectrum_mu(
+def _ds_galaxy_tree_eft_cross_spectrum_mu(
     k: np.ndarray,
     mu: np.ndarray,
     plin: np.ndarray,
@@ -71,7 +71,7 @@ def _density_split_galaxy_tree_eft_power_spectrum_mu(
         return (plin * wk)[:, np.newaxis] * ds_factor * gal_rsd[np.newaxis, :]
 
 
-def density_split_linear_matter_cross_spectrum_mu(
+def ds_linear_matter_cross_spectrum_mu(
     k: np.ndarray,
     mu: np.ndarray,
     plin: np.ndarray,
@@ -108,7 +108,7 @@ def density_split_linear_matter_cross_spectrum_mu(
         return (plin * wk)[:, np.newaxis] * ds_angular[np.newaxis, :]
 
 
-def _density_split_galaxy_one_loop_partial_power_spectrum_mu(
+def _ds_galaxy_one_loop_partial_cross_spectrum_mu(
     k: np.ndarray,
     mu: np.ndarray,
     plin: np.ndarray,
@@ -182,7 +182,7 @@ def _density_split_galaxy_one_loop_partial_power_spectrum_mu(
         return (delta_p * wk)[:, np.newaxis] * ds_factor[np.newaxis, :] * gal_rsd[np.newaxis, :]
 
 
-def density_split_galaxy_eft_power_spectrum_mu(
+def ds_galaxy_eft_cross_spectrum_mu(
     k: np.ndarray,
     mu: np.ndarray,
     z: float,
@@ -244,7 +244,7 @@ def density_split_galaxy_eft_power_spectrum_mu(
     f = get_growth_rate(cosmo, z) if space == "redshift" else 0.0
 
     if mode == "tree":
-        return _density_split_galaxy_tree_eft_power_spectrum_mu(
+        return _ds_galaxy_tree_eft_cross_spectrum_mu(
             k, mu, plin, wk, f, ds_params, gal_params, ds_model
         )
 
@@ -302,7 +302,7 @@ def density_split_galaxy_eft_power_spectrum_mu(
             )
 
         # Galaxy EFT counterterm: -k^2*(c0+c2*mu^2+c4*mu^4) * P_{DS×lin}
-        ds_lin = density_split_linear_matter_cross_spectrum_mu(
+        ds_lin = ds_linear_matter_cross_spectrum_mu(
             k, mu, plin, wk, f, ds_params, ds_model
         )
         P = P + galaxy_counterterm(k, mu, gal_params, ds_lin)
@@ -310,7 +310,7 @@ def density_split_galaxy_eft_power_spectrum_mu(
         # DS higher-derivative counterterm
         ds_normed = DensitySplitEFTParameters(label=ds_params.label, bq1=1.0, beta_q=ds_params.beta_q)
         gal_normed = GalaxyEFTParameters(b1=gal_params.b1)
-        tree_normed = _density_split_galaxy_tree_eft_power_spectrum_mu(
+        tree_normed = _ds_galaxy_tree_eft_cross_spectrum_mu(
             k, mu, plin, wk, f, ds_normed, gal_normed, ds_model
         )
         P = P + density_split_counterterm(k, mu, plin, ds_params, tree_normed, R)
@@ -338,7 +338,7 @@ def density_split_galaxy_eft_power_spectrum_mu(
         return P
 
     # eft_lite or eft_full: tree + counterterms (no one-loop promotion yet)
-    # NOTE: _density_split_galaxy_one_loop_partial_power_spectrum_mu() exists but is intentionally not called here.
+    # NOTE: _ds_galaxy_one_loop_partial_cross_spectrum_mu() exists but is intentionally not called here.
     # The raw SPT P13 produces |2P13/Plin| ~ 13-15 at k<0.05 (see
     # test_P13_not_over_normalized), which is not k²-suppressed and cannot be
     # renormalized by the k²*Plin EFT counterterm basis.  The loop-promotion
@@ -348,14 +348,14 @@ def density_split_galaxy_eft_power_spectrum_mu(
     # Tree-level (normed at bq1=1 for DS counterterm shape)
     ds_normed = DensitySplitEFTParameters(label=ds_params.label, bq1=1.0, beta_q=ds_params.beta_q)
     gal_normed = GalaxyEFTParameters(b1=gal_params.b1)
-    tree_normed = _density_split_galaxy_tree_eft_power_spectrum_mu(
+    tree_normed = _ds_galaxy_tree_eft_cross_spectrum_mu(
         k, mu, plin, wk, f, ds_normed, gal_normed, ds_model
     )
 
-    P = _density_split_galaxy_tree_eft_power_spectrum_mu(
+    P = _ds_galaxy_tree_eft_cross_spectrum_mu(
         k, mu, plin, wk, f, ds_params, gal_params, ds_model
     )
-    ds_lin = density_split_linear_matter_cross_spectrum_mu(
+    ds_lin = ds_linear_matter_cross_spectrum_mu(
         k, mu, plin, wk, f, ds_params, ds_model
     )
     P = P + galaxy_counterterm(k, mu, gal_params, ds_lin)
@@ -367,9 +367,9 @@ def density_split_galaxy_eft_power_spectrum_mu(
     return P
 
 
-_pqg_tree_eft = _density_split_galaxy_tree_eft_power_spectrum_mu
-_pqg_ds_lin = density_split_linear_matter_cross_spectrum_mu
-_pqg_one_loop_partial = _density_split_galaxy_one_loop_partial_power_spectrum_mu
-pqg_eft_mu = density_split_galaxy_eft_power_spectrum_mu
+_pqg_tree_eft = _ds_galaxy_tree_eft_cross_spectrum_mu
+_pqg_ds_lin = ds_linear_matter_cross_spectrum_mu
+_pqg_one_loop_partial = _ds_galaxy_one_loop_partial_cross_spectrum_mu
+pqg_eft_mu = ds_galaxy_eft_cross_spectrum_mu
 DSSplitBinEFT = DensitySplitEFTParameters
 GalaxyEFTParams = GalaxyEFTParameters

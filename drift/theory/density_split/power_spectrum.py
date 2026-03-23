@@ -18,7 +18,7 @@ def _get_kernel(kernel: str, k: np.ndarray, R: float) -> np.ndarray:
         raise ValueError(f"Unknown kernel '{kernel}'. Choose 'gaussian' or 'tophat'.")
 
 
-def density_split_matter_power_spectrum_mu(
+def ds_matter_cross_spectrum_mu(
     k: np.ndarray,
     mu: np.ndarray,
     z: float,
@@ -123,7 +123,7 @@ def density_split_matter_power_spectrum_mu(
         raise ValueError(f"Unknown space '{space}'. Choose 'redshift' or 'real'.")
 
 
-def density_split_galaxy_power_spectrum_mu(
+def ds_galaxy_cross_spectrum_mu(
     k: np.ndarray,
     mu: np.ndarray,
     z: float,
@@ -230,6 +230,6 @@ def density_split_galaxy_power_spectrum_mu(
         raise ValueError(f"Unknown space '{space}'. Choose 'redshift' or 'real'.")
 
 
-pqm_mu = density_split_matter_power_spectrum_mu
-pqg_mu = density_split_galaxy_power_spectrum_mu
+pqm_mu = ds_matter_cross_spectrum_mu
+pqg_mu = ds_galaxy_cross_spectrum_mu
 DSSplitBin = DensitySplitBin
