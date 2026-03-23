@@ -9,7 +9,12 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from drift.covariance import analytic_pgg_covariance, correlation_matrix, plot_correlation_matrix
+from drift.covariance import (
+    analytic_pgg_covariance,
+    correlation_matrix,
+    estimate_ssc_sigma_b2,
+    plot_correlation_matrix,
+)
 
 
 def _fiducial_poles(k):
@@ -93,6 +98,75 @@ def test_effective_cng_zero_amplitude_matches_gaussian():
         cng_amplitude=0.0,
     )
     np.testing.assert_allclose(cov_zero, cov_gauss)
+
+
+def test_ssc_adds_rank_one_mode_coupling():
+    k = np.array([0.05, 0.10, 0.15, 0.20])
+    poles = _fiducial_poles(k)
+    cov_gauss, _ = analytic_pgg_covariance(
+        k, poles, ells=(0, 2), volume=8.0e8, shot_noise=300.0,
+    )
+    cov_ssc, _ = analytic_pgg_covariance(
+        k,
+        poles,
+        ells=(0, 2),
+        volume=8.0e8,
+        shot_noise=300.0,
+        terms="gaussian+ssc",
+        ssc_sigma_b2=1.0e-4,
+    )
+    nk = len(k)
+    block_00 = cov_ssc[:nk, :nk]
+    block_02 = cov_ssc[:nk, nk:]
+    assert np.any(np.abs(block_00 - np.diag(np.diag(block_00))) > 0.0)
+    assert np.any(np.abs(block_02 - np.diag(np.diag(block_02))) > 0.0)
+    assert np.any(np.abs(cov_ssc - cov_gauss) > 0.0)
+
+
+def test_ssc_zero_variance_matches_gaussian():
+    k = np.array([0.05, 0.10, 0.15])
+    poles = _fiducial_poles(k)
+    cov_gauss, _ = analytic_pgg_covariance(
+        k, poles, ells=(0, 2), volume=8.0e8, shot_noise=300.0,
+    )
+    cov_zero, _ = analytic_pgg_covariance(
+        k,
+        poles,
+        ells=(0, 2),
+        volume=8.0e8,
+        shot_noise=300.0,
+        terms="gaussian+ssc",
+        ssc_sigma_b2=0.0,
+    )
+    np.testing.assert_allclose(cov_zero, cov_gauss)
+
+
+def test_effective_cng_and_ssc_terms_compose():
+    k = np.array([0.05, 0.10, 0.15, 0.20])
+    poles = _fiducial_poles(k)
+    cov_combo, _ = analytic_pgg_covariance(
+        k,
+        poles,
+        ells=(0, 2),
+        volume=8.0e8,
+        shot_noise=300.0,
+        terms="gaussian+effective_cng+ssc",
+        cng_amplitude=0.2,
+        cng_coherence=0.3,
+        ssc_sigma_b2=1.0e-4,
+    )
+    cov_gauss, _ = analytic_pgg_covariance(
+        k, poles, ells=(0, 2), volume=8.0e8, shot_noise=300.0,
+    )
+    assert np.any(np.abs(cov_combo - cov_gauss) > 0.0)
+
+
+def test_estimate_ssc_sigma_b2_is_positive_and_decreases_with_volume():
+    sigma_small = estimate_ssc_sigma_b2(volume=5.0e8, z=0.5)
+    sigma_large = estimate_ssc_sigma_b2(volume=1.0e9, z=0.5)
+    assert sigma_small > 0.0
+    assert sigma_large > 0.0
+    assert sigma_large < sigma_small
 
 
 def test_analytic_covariance_scales_with_volume_and_shot_noise():

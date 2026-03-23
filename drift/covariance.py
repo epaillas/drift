@@ -5,6 +5,8 @@ from __future__ import annotations
 import itertools
 import numpy as np
 
+from .utils.cosmology import get_cosmology, get_linear_power
+from .utils.kernels import tophat_kernel
 from .utils.multipoles import legendre
 
 
@@ -251,6 +253,8 @@ def _normalize_terms(terms: str) -> tuple[str, ...]:
         "connected": "effective_cng",
         "cng": "effective_cng",
         "non_gaussian": "effective_cng",
+        "supersample": "ssc",
+        "super_sample": "ssc",
     }
     normalized = []
     for token in str(terms).lower().replace(" ", "").split("+"):
@@ -260,12 +264,12 @@ def _normalize_terms(terms: str) -> tuple[str, ...]:
     if not normalized:
         raise ValueError("At least one covariance term must be provided.")
 
-    allowed = {"gaussian", "effective_cng"}
+    allowed = {"gaussian", "effective_cng", "ssc"}
     invalid = [token for token in normalized if token not in allowed]
     if invalid:
         raise ValueError(
             f"Unsupported covariance terms={terms!r}. "
-            "Supported terms are 'gaussian' and 'effective_cng'."
+            "Supported terms are 'gaussian', 'effective_cng', and 'ssc'."
         )
 
     deduped = []
@@ -290,6 +294,103 @@ def _rbf_kernel_logk(k: np.ndarray, coherence: float) -> np.ndarray:
     logk = np.log(np.asarray(k, dtype=float))
     dist2 = (logk[:, None] - logk[None, :]) ** 2
     return np.exp(-0.5 * dist2 / coherence ** 2)
+
+
+def _ssc_variance_radius(volume: float) -> float:
+    """Equivalent spherical radius for a survey volume."""
+    if volume <= 0.0:
+        raise ValueError("volume must be positive.")
+    return (3.0 * volume / (4.0 * np.pi)) ** (1.0 / 3.0)
+
+
+def estimate_ssc_sigma_b2(
+    volume: float,
+    z: float,
+    cosmo=None,
+    *,
+    kmin: float = 1.0e-4,
+    kmax: float = 1.0,
+    nk: int = 4096,
+) -> float:
+    """Estimate the long-mode density variance entering SSC.
+
+    The implementation uses the linear matter power spectrum with an
+    equivalent-volume spherical top-hat window.
+    """
+    if z < 0.0:
+        raise ValueError("z must be non-negative.")
+    if kmin <= 0.0 or kmax <= kmin:
+        raise ValueError("Require 0 < kmin < kmax.")
+    if nk < 8:
+        raise ValueError("nk must be at least 8.")
+
+    if cosmo is None:
+        cosmo = get_cosmology()
+    elif isinstance(cosmo, dict):
+        cosmo = get_cosmology(cosmo)
+
+    radius = _ssc_variance_radius(volume)
+    k = np.logspace(np.log10(kmin), np.log10(kmax), int(nk))
+    plin = get_linear_power(cosmo, k, z)
+    window = tophat_kernel(k, radius)
+    integrand = k ** 2 * plin * window ** 2 / (2.0 * np.pi ** 2)
+    return float(np.trapezoid(integrand, k))
+
+
+def _project_to_multipoles(
+    pkmu: np.ndarray,
+    ells,
+    *,
+    L: dict[int, np.ndarray],
+    weights: np.ndarray,
+) -> dict[int, np.ndarray]:
+    """Project P(k,mu)-like arrays onto multipoles."""
+    return {
+        int(ell): 0.5 * (2 * int(ell) + 1) * (pkmu * L[int(ell)][None, :]) @ weights
+        for ell in ells
+    }
+
+
+def _ssc_density_response_pkmu(
+    k: np.ndarray,
+    pkmu: np.ndarray,
+    *,
+    growth_coeff: float = 47.0 / 21.0,
+) -> np.ndarray:
+    """Approximate isotropic SSC response of P(k,mu) to a background mode."""
+    k = np.asarray(k, dtype=float)
+    pkmu = np.asarray(pkmu, dtype=float)
+    if pkmu.shape[0] != len(k):
+        raise ValueError("pkmu leading dimension must match k.")
+
+    logk = np.log(k)
+    edge_order = 2 if len(k) > 2 else 1
+    dpk_dlnk = np.gradient(pkmu, logk, axis=0, edge_order=edge_order)
+    return growth_coeff * pkmu - dpk_dlnk / 3.0
+
+
+def _flatten_observable_responses(
+    response_poles_by_label,
+    ells,
+    label_order,
+) -> np.ndarray:
+    """Flatten response multipoles using observable-major then ell-major ordering."""
+    blocks = []
+    for label in label_order:
+        for ell in ells:
+            blocks.append(np.asarray(response_poles_by_label[label][int(ell)], dtype=float))
+    return np.concatenate(blocks)
+
+
+def _ssc_covariance(response_vector: np.ndarray, sigma_b2: float) -> np.ndarray:
+    """Rank-1 density-only SSC covariance."""
+    if sigma_b2 < 0.0:
+        raise ValueError("ssc_sigma_b2 must be non-negative.")
+    if sigma_b2 == 0.0:
+        n = len(response_vector)
+        return np.zeros((n, n), dtype=float)
+    response = np.asarray(response_vector, dtype=float)
+    return sigma_b2 * np.outer(response, response)
 
 
 def _gaussian_covariance(
@@ -392,6 +493,7 @@ def _effective_cng_covariance(
     gaussian_cov: np.ndarray,
     ells,
     *,
+    observable_blocks: int = 1,
     amplitude: float,
     coherence: float,
 ) -> np.ndarray:
@@ -412,17 +514,20 @@ def _effective_cng_covariance(
 
     sigma = np.sqrt(np.clip(np.diag(gaussian_cov), 0.0, None))
     nells = len(ells)
+    nsubblocks = observable_blocks * nells
+    if gaussian_cov.shape != (nsubblocks * nk, nsubblocks * nk):
+        raise ValueError(
+            "gaussian_cov shape is inconsistent with k, ells, and observable_blocks."
+        )
+
     response = np.empty_like(sigma)
-    for i, weight in enumerate(ell_weights):
-        sl = slice(i * nk, (i + 1) * nk)
+    for block_idx in range(nsubblocks):
+        ell_idx = block_idx % nells
+        weight = ell_weights[ell_idx]
+        sl = slice(block_idx * nk, (block_idx + 1) * nk)
         response[sl] = weight * sigma[sl]
 
-    kernel = np.zeros_like(gaussian_cov)
-    for i in range(nells):
-        row = slice(i * nk, (i + 1) * nk)
-        for j in range(nells):
-            col = slice(j * nk, (j + 1) * nk)
-            kernel[row, col] = kernel_k
+    kernel = np.kron(np.ones((nsubblocks, nsubblocks), dtype=float), kernel_k)
 
     return amplitude * np.outer(response, response) * kernel
 
@@ -512,6 +617,7 @@ def analytic_pgg_covariance(
     mu_points: int = 256,
     cng_amplitude: float = 0.0,
     cng_coherence: float = 0.35,
+    ssc_sigma_b2: float | None = None,
 ):
     """Gaussian cubic-box covariance for galaxy power-spectrum multipoles.
 
@@ -536,8 +642,8 @@ def analytic_pgg_covariance(
     rescale : float, default 1.0
         Divide covariance by this factor.
     terms : str, default "gaussian"
-        Covariance terms to include. Supported values are ``"gaussian"`` and
-        ``"gaussian+effective_cng"``.
+        Covariance terms to include. Supported labels are ``"gaussian"``,
+        ``"effective_cng"``, and ``"ssc"``.
     mu_points : int, default 256
         Number of Gauss-Legendre nodes for the mu integral.
     cng_amplitude : float, default 0.0
@@ -545,6 +651,9 @@ def analytic_pgg_covariance(
         Ignored unless ``terms`` includes ``effective_cng``.
     cng_coherence : float, default 0.35
         Correlation length of the effective connected correction in ``ln k``.
+    ssc_sigma_b2 : float, optional
+        Long-mode density variance entering the density-only SSC term.
+        Required when ``terms`` includes ``"ssc"``.
     """
     term_labels = _normalize_terms(terms)
 
@@ -578,6 +687,16 @@ def analytic_pgg_covariance(
             amplitude=cng_amplitude,
             coherence=cng_coherence,
         )
+    if "ssc" in term_labels:
+        if ssc_sigma_b2 is None:
+            raise ValueError("Provide ssc_sigma_b2 when terms includes 'ssc'.")
+        mu, weights = np.polynomial.legendre.leggauss(mu_points)
+        L = {ell: legendre(ell, mu) for ell in ells}
+        pkmu = _reconstruct_pkmu(k, pole_dict, ells, mu, L)
+        response_pkmu = _ssc_density_response_pkmu(k, pkmu)
+        response_poles = _project_to_multipoles(response_pkmu, ells, L=L, weights=weights)
+        response_vector = np.concatenate([response_poles[ell] for ell in ells])
+        cov = cov + _ssc_covariance(response_vector, float(ssc_sigma_b2))
 
     if mask is not None:
         cov = cov[np.ix_(mask, mask)]
@@ -598,13 +717,12 @@ def analytic_pqq_covariance(
     rescale: float = 1.0,
     terms: str = "gaussian",
     mu_points: int = 256,
+    cng_amplitude: float = 0.0,
+    cng_coherence: float = 0.35,
+    ssc_sigma_b2: float | None = None,
 ):
     """Gaussian cubic-box covariance for density-split pair multipoles."""
     term_labels = _normalize_terms(terms)
-    if any(term != "gaussian" for term in term_labels):
-        raise NotImplementedError(
-            "Beyond-Gaussian density-split pair covariance terms are not yet implemented."
-        )
     if rescale <= 0.0:
         raise ValueError("rescale must be positive.")
 
@@ -624,6 +742,27 @@ def analytic_pqq_covariance(
         rescale=rescale,
         mu_points=mu_points,
     )
+    if "effective_cng" in term_labels:
+        cov = cov + _effective_cng_covariance(
+            k,
+            cov,
+            ells,
+            observable_blocks=len(pair_order),
+            amplitude=cng_amplitude,
+            coherence=cng_coherence,
+        )
+    if "ssc" in term_labels:
+        if ssc_sigma_b2 is None:
+            raise ValueError("Provide ssc_sigma_b2 when terms includes 'ssc'.")
+        mu, weights = np.polynomial.legendre.leggauss(mu_points)
+        L = {ell: legendre(ell, mu) for ell in ells}
+        response_by_pair = {}
+        for pair in pair_order:
+            pkmu = _reconstruct_pkmu(k, pair_poles[pair], ells, mu, L)
+            response_pkmu = _ssc_density_response_pkmu(k, pkmu)
+            response_by_pair[pair] = _project_to_multipoles(response_pkmu, ells, L=L, weights=weights)
+        response_vector = _flatten_observable_responses(response_by_pair, ells, pair_order)
+        cov = cov + _ssc_covariance(response_vector, float(ssc_sigma_b2))
 
     if mask is not None:
         cov = cov[np.ix_(mask, mask)]
@@ -648,13 +787,12 @@ def analytic_pqg_covariance(
     rescale: float = 1.0,
     terms: str = "gaussian",
     mu_points: int = 256,
+    cng_amplitude: float = 0.0,
+    cng_coherence: float = 0.35,
+    ssc_sigma_b2: float | None = None,
 ):
     """Gaussian cubic-box covariance for density-split-galaxy multipoles."""
     term_labels = _normalize_terms(terms)
-    if any(term != "gaussian" for term in term_labels):
-        raise NotImplementedError(
-            "Beyond-Gaussian density-split-galaxy covariance terms are not yet implemented."
-        )
     if rescale <= 0.0:
         raise ValueError("rescale must be positive.")
     if galaxy_shot_noise < 0.0:
@@ -686,6 +824,27 @@ def analytic_pqg_covariance(
         rescale=rescale,
         mu_points=mu_points,
     )
+    if "effective_cng" in term_labels:
+        cov = cov + _effective_cng_covariance(
+            k,
+            cov,
+            ells,
+            observable_blocks=len(ds_labels),
+            amplitude=cng_amplitude,
+            coherence=cng_coherence,
+        )
+    if "ssc" in term_labels:
+        if ssc_sigma_b2 is None:
+            raise ValueError("Provide ssc_sigma_b2 when terms includes 'ssc'.")
+        mu, weights = np.polynomial.legendre.leggauss(mu_points)
+        L = {ell: legendre(ell, mu) for ell in ells}
+        response_by_label = {}
+        for label in ds_labels:
+            pkmu = _reconstruct_pkmu(k, pqg_pole_dict[label], ells, mu, L)
+            response_pkmu = _ssc_density_response_pkmu(k, pkmu)
+            response_by_label[label] = _project_to_multipoles(response_pkmu, ells, L=L, weights=weights)
+        response_vector = _flatten_observable_responses(response_by_label, ells, ds_labels)
+        cov = cov + _ssc_covariance(response_vector, float(ssc_sigma_b2))
 
     if mask is not None:
         cov = cov[np.ix_(mask, mask)]

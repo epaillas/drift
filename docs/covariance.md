@@ -11,9 +11,8 @@ The implementation lives in [`drift/covariance.py`](/Users/epaillas/code/drift/d
 The current code supports:
 
 - a disconnected Gaussian covariance for a cubic box for `P_{gg}`, `P_{q_i q_j}`, and `P_{q_i g}`
-- an optional phenomenological connected correction labeled `effective_cng` for `P_{gg}` only
-
-For density-split observables, any beyond-Gaussian term request currently raises `NotImplementedError`. Those code paths are deliberate placeholders for future extensions.
+- an optional phenomenological connected correction labeled `effective_cng` for `P_{gg}`, `P_{q_i q_j}`, and `P_{q_i g}`
+- a density-only super-sample covariance term labeled `ssc` for `P_{gg}`, `P_{q_i q_j}`, and `P_{q_i g}`
 
 ---
 
@@ -39,7 +38,7 @@ $$
 with $\Delta k_i$ inferred from adjacent bin centers
 - numerical $\mu$ integration via Gauss-Legendre quadrature
 
-As in the usual Gaussian multipole treatment, the disconnected covariance is diagonal in the radial bin index $k_i$ but can correlate different multipoles at fixed $k_i$. This is the same box-level approximation commonly used as the starting point for anisotropic power-spectrum covariance models; see for example [Wadekar & Scoccimarro (2020)](https://arxiv.org/abs/1910.02914).
+As in the usual Gaussian multipole treatment, the disconnected covariance is diagonal in the radial bin index $k_i$ but can correlate different multipoles at fixed $k_i$. This is the same box-level approximation commonly used as the starting point for anisotropic power-spectrum covariance models; see for example [Wadekar & Scoccimarro (2020)](https://doi.org/10.1103/PhysRevD.102.123517).
 
 ---
 
@@ -76,7 +75,7 @@ $$
 
 This is the structure implemented by `_gaussian_covariance(...)`.
 
-The `P_{gg}` path also supports `terms="gaussian+effective_cng"`, which adds the existing phenomenological connected correction on top of the Gaussian covariance.
+The `P_{gg}` path also supports `terms` including `effective_cng` and `ssc`, which add the existing phenomenological connected correction and the density-only super-sample covariance term on top of the Gaussian covariance.
 
 ---
 
@@ -202,22 +201,90 @@ This `P_{qg}` block structure is the natural Gaussian companion to the density-s
 
 ---
 
-## Beyond-Gaussian Placeholders
+## Super-Sample Covariance
 
-For density-split observables, the only implemented term is:
+The implemented SSC term follows the standard response-based density-only approximation
+
+$$
+\mathrm{Cov}_{\rm SSC}[X_i, X_j] = \sigma_b^2 \, R_i \, R_j,
+$$
+
+where $\sigma_b^2$ is the variance of the survey-scale background density mode and $R_i \equiv \partial X_i / \partial \delta_b$ is the response of a data-vector element to that long-wavelength isotropic density perturbation. This is the same rank-1 SSC structure emphasized in [Takada & Hu (2013)](https://doi.org/10.1103/PhysRevD.87.123504), [Li, Hu & Takada (2014)](https://doi.org/10.1103/PhysRevD.89.083519), and the broader response overview in [Bayer et al. (2023)](https://doi.org/10.1103/PhysRevD.108.043521).
+
+To keep the covariance API coherent with the current implementation, the code infers the response directly from the supplied fiducial spectra rather than from a separate-universe tracer model. It reconstructs the fiducial anisotropic spectrum and applies
+
+$$
+R_P(k,\mu)
+\approx
+\left(
+\frac{47}{21}
+- \frac{1}{3}\frac{\partial}{\partial \ln k}
+\right)
+P(k,\mu),
+$$
+
+which combines a universal growth term with the standard dilation term. The response is then projected back to multipoles using
+
+$$
+R_\ell(k)
+=
+\frac{2\ell+1}{2}
+\int_{-1}^{1} d\mu \,
+\mathcal{L}_\ell(\mu)\,
+R_P(k,\mu).
+$$
+
+The projected response is flattened in the same ordering as the covariance data vector and used in the outer product above.
+
+This is an intentionally simplified SSC model. In particular:
+
+- only the isotropic density SSC is included
+- tidal SSC is not implemented
+- shot-noise terms are treated as having zero SSC response
+- tracer-specific separate-universe response corrections are not modeled explicitly
+
+The low-level covariance APIs take `ssc_sigma_b2` explicitly. The package also provides `estimate_ssc_sigma_b2(volume, z, cosmo=None)`, which evaluates
+
+$$
+\sigma_b^2(R)
+=
+\int \frac{k^2 dk}{2\pi^2}
+P_{\rm lin}(k, z)\,
+W_{\rm TH}^2(kR),
+$$
+
+with an equivalent-volume spherical top-hat window and
+
+$$
+R = \left(\frac{3V}{4\pi}\right)^{1/3}.
+$$
+
+This estimator is meant as a coherent default for the current box-style covariance interface, not as a full survey-window treatment.
+
+For all currently supported observable families, the SSC term is added on top of the Gaussian covariance and any enabled `effective_cng` term:
+
+- `analytic_pgg_covariance(...)`
+- `analytic_pqq_covariance(...)`
+- `analytic_pqg_covariance(...)`
+
+---
+
+## Beyond-Gaussian Terms
+
+For all currently supported observable families, the implemented terms are:
 
 - `"gaussian"`
+- `"gaussian+effective_cng"`
+- `"gaussian+ssc"`
+- `"gaussian+effective_cng+ssc"`
 
-If `terms` includes `effective_cng` or any other non-Gaussian alias:
+For density-split observables, `effective_cng` should still be read as a phenomenological connected extension rather than a first-principles DS trispectrum model.
 
-- `analytic_pqq_covariance(...)` raises `NotImplementedError`
-- `analytic_pqg_covariance(...)` raises `NotImplementedError`
-
-This is an intentional placeholder for future work on:
+Future work is still needed on:
 
 - connected DS trispectrum terms
 - connected DS×g trispectrum terms
-- super-sample covariance
+- tidal super-sample covariance
 - survey-window mixing
 - joint covariance blocks involving `P_{gg}`, `P_{q_i q_j}`, and `P_{q_i g}`
 
@@ -243,6 +310,7 @@ analytic_pgg_covariance(
     mu_points=256,
     cng_amplitude=0.0,
     cng_coherence=0.35,
+    ssc_sigma_b2=None,
 )
 ```
 
@@ -258,6 +326,9 @@ analytic_pqq_covariance(
     rescale=1.0,
     terms="gaussian",
     mu_points=256,
+    cng_amplitude=0.0,
+    cng_coherence=0.35,
+    ssc_sigma_b2=None,
 )
 ```
 
@@ -277,6 +348,9 @@ analytic_pqg_covariance(
     rescale=1.0,
     terms="gaussian",
     mu_points=256,
+    cng_amplitude=0.0,
+    cng_coherence=0.35,
+    ssc_sigma_b2=None,
 )
 ```
 
@@ -287,10 +361,10 @@ analytic_pqg_covariance(
 The following pieces are not implemented in the current analytic covariance path:
 
 1. First-principles connected non-Gaussian covariance for either `P_{gg}`, `P_{q_i q_j}`, or `P_{q_i g}`
-2. Beyond-Gaussian density-split covariance of any kind
+2. First-principles beyond-Gaussian density-split covariance
 3. Survey-window convolution and mask-induced mode mixing
-4. Super-sample covariance and response terms
+4. Tidal super-sample covariance and tracer-calibrated response terms
 5. Joint cross-covariance blocks involving multiple observable families
 6. Covariance dependence on geometry beyond the cubic-box approximation
 
-So the current implementation should be read as a fast Gaussian box covariance model, with a phenomenological connected extension for `P_{gg}` only.
+So the current implementation should be read as a fast Gaussian box covariance model, augmented by a phenomenological connected correction and a density-only SSC approximation for the currently supported observable families.

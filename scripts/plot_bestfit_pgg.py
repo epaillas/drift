@@ -83,7 +83,7 @@ def main():
         type=str,
         default="gaussian",
         metavar="TERMS",
-        help="Analytic covariance terms: 'gaussian' or 'gaussian+effective_cng'.",
+        help="Analytic covariance terms: 'gaussian', 'gaussian+effective_cng', 'gaussian+ssc', or 'gaussian+effective_cng+ssc'.",
     )
     parser.add_argument(
         "--box-volume",
@@ -109,9 +109,12 @@ def main():
     parser.add_argument(
         "--cng-amplitude",
         type=float,
-        default=0.0,
+        default=None,
         metavar="A",
-        help="Amplitude of the effective connected covariance term.",
+        help=(
+            "Amplitude of the effective connected covariance term. "
+            "Defaults to the shared nonzero value when effective_cng is enabled."
+        ),
     )
     parser.add_argument(
         "--cng-coherence",
@@ -119,6 +122,13 @@ def main():
         default=0.35,
         metavar="SIGMA",
         help="Log-k coherence length of the effective connected covariance term.",
+    )
+    parser.add_argument(
+        "--ssc-sigma-b2",
+        type=float,
+        default=None,
+        metavar="VAR",
+        help="Long-mode density variance for the SSC term. If omitted and ssc is requested, it is estimated from --box-volume.",
     )
     parser.add_argument(
         "--vary-cosmo",

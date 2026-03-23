@@ -514,7 +514,7 @@ def main():
     parser.add_argument("--analytic-cov", action="store_true",
                         help="Use analytic cubic-box covariance for the P_gg block.")
     parser.add_argument("--analytic-cov-terms", type=str, default="gaussian", metavar="TERMS",
-                        help="Analytic P_gg covariance terms: 'gaussian' or 'gaussian+effective_cng'.")
+                        help="Analytic P_gg covariance terms: 'gaussian', 'gaussian+effective_cng', 'gaussian+ssc', or 'gaussian+effective_cng+ssc'.")
     parser.add_argument("--cov-rescale", type=float, default=64.0, metavar="FACTOR")
     parser.add_argument("--box-volume", type=float, default=None, metavar="V",
                         help="Box volume in (Mpc/h)^3 for analytic P_gg covariance.")
@@ -522,10 +522,25 @@ def main():
                         help="Galaxy number density in (h/Mpc)^3 for analytic P_gg covariance.")
     parser.add_argument("--shot-noise", type=float, default=None, metavar="P0",
                         help="Constant shot-noise power in (Mpc/h)^3 for analytic P_gg covariance.")
-    parser.add_argument("--cng-amplitude", type=float, default=0.0, metavar="A",
-                        help="Amplitude of the effective connected P_gg covariance term.")
+    parser.add_argument(
+        "--cng-amplitude",
+        type=float,
+        default=None,
+        metavar="A",
+        help=(
+            "Amplitude of the effective connected P_gg covariance term. "
+            "Defaults to the shared nonzero value when effective_cng is enabled."
+        ),
+    )
     parser.add_argument("--cng-coherence", type=float, default=0.35, metavar="SIGMA",
                         help="Log-k coherence length of the effective connected P_gg covariance term.")
+    parser.add_argument(
+        "--ssc-sigma-b2",
+        type=float,
+        default=None,
+        metavar="VAR",
+        help="Long-mode density variance for the SSC term. If omitted and ssc is requested, it is estimated from --box-volume.",
+    )
     parser.add_argument("--analytic-marg", action="store_true",
                         help="Analytically marginalize over linear nuisance parameters.")
     parser.add_argument("--marg-prior-sigma", nargs="+", default=None, metavar="PARAM=VALUE",

@@ -218,22 +218,136 @@ def test_analytic_pqg_covariance_scales_with_volume_and_noise():
     assert np.all(np.diag(cov_high_noise) > np.diag(cov_low_noise))
 
 
-def test_analytic_pqg_covariance_rejects_non_gaussian_terms():
+def test_analytic_pqg_effective_cng_adds_off_diagonal_mode_coupling():
+    k = np.array([0.05, 0.10, 0.15, 0.20])
+    cov_gauss, _ = analytic_pqg_covariance(
+        k,
+        _fiducial_pqg_poles(k),
+        _fiducial_pqq_poles(k),
+        _fiducial_pgg_poles(k),
+        ells=ELLS,
+        volume=8.0e8,
+        ds_labels=DS_LABELS,
+        galaxy_shot_noise=200.0,
+        ds_pair_shot_noise=_pair_shot_noise(),
+        ds_cross_shot_noise=_cross_shot_noise(),
+    )
+    cov_cng, _ = analytic_pqg_covariance(
+        k,
+        _fiducial_pqg_poles(k),
+        _fiducial_pqq_poles(k),
+        _fiducial_pgg_poles(k),
+        ells=ELLS,
+        volume=8.0e8,
+        ds_labels=DS_LABELS,
+        galaxy_shot_noise=200.0,
+        ds_pair_shot_noise=_pair_shot_noise(),
+        ds_cross_shot_noise=_cross_shot_noise(),
+        terms="gaussian+effective_cng",
+        cng_amplitude=0.25,
+        cng_coherence=0.30,
+    )
+    nk = len(k)
+    block_00 = cov_cng[:nk, :nk]
+    block_02 = cov_cng[:nk, nk:2 * nk]
+    assert np.any(np.abs(block_00 - np.diag(np.diag(block_00))) > 0.0)
+    assert np.any(np.abs(block_02 - np.diag(np.diag(block_02))) > 0.0)
+    assert np.all(np.diag(cov_cng) > np.diag(cov_gauss))
+
+
+def test_analytic_pqg_effective_cng_zero_amplitude_matches_gaussian():
     k = np.array([0.05, 0.10, 0.15])
-    try:
-        analytic_pqg_covariance(
-            k,
-            _fiducial_pqg_poles(k),
-            _fiducial_pqq_poles(k),
-            _fiducial_pgg_poles(k),
-            ells=ELLS,
-            volume=8.0e8,
-            ds_labels=DS_LABELS,
-            galaxy_shot_noise=200.0,
-            ds_pair_shot_noise=_pair_shot_noise(),
-            ds_cross_shot_noise=_cross_shot_noise(),
-            terms="gaussian+effective_cng",
-        )
-    except NotImplementedError:
-        return
-    raise AssertionError("Expected NotImplementedError for beyond-Gaussian DSG covariance.")
+    cov_gauss, _ = analytic_pqg_covariance(
+        k,
+        _fiducial_pqg_poles(k),
+        _fiducial_pqq_poles(k),
+        _fiducial_pgg_poles(k),
+        ells=ELLS,
+        volume=8.0e8,
+        ds_labels=DS_LABELS,
+        galaxy_shot_noise=200.0,
+        ds_pair_shot_noise=_pair_shot_noise(),
+        ds_cross_shot_noise=_cross_shot_noise(),
+    )
+    cov_zero, _ = analytic_pqg_covariance(
+        k,
+        _fiducial_pqg_poles(k),
+        _fiducial_pqq_poles(k),
+        _fiducial_pgg_poles(k),
+        ells=ELLS,
+        volume=8.0e8,
+        ds_labels=DS_LABELS,
+        galaxy_shot_noise=200.0,
+        ds_pair_shot_noise=_pair_shot_noise(),
+        ds_cross_shot_noise=_cross_shot_noise(),
+        terms="gaussian+effective_cng",
+        cng_amplitude=0.0,
+    )
+    np.testing.assert_allclose(cov_zero, cov_gauss)
+
+
+def test_analytic_pqg_ssc_adds_off_diagonal_mode_coupling():
+    k = np.array([0.05, 0.10, 0.15, 0.20])
+    cov_gauss, _ = analytic_pqg_covariance(
+        k,
+        _fiducial_pqg_poles(k),
+        _fiducial_pqq_poles(k),
+        _fiducial_pgg_poles(k),
+        ells=ELLS,
+        volume=8.0e8,
+        ds_labels=DS_LABELS,
+        galaxy_shot_noise=200.0,
+        ds_pair_shot_noise=_pair_shot_noise(),
+        ds_cross_shot_noise=_cross_shot_noise(),
+    )
+    cov_ssc, _ = analytic_pqg_covariance(
+        k,
+        _fiducial_pqg_poles(k),
+        _fiducial_pqq_poles(k),
+        _fiducial_pgg_poles(k),
+        ells=ELLS,
+        volume=8.0e8,
+        ds_labels=DS_LABELS,
+        galaxy_shot_noise=200.0,
+        ds_pair_shot_noise=_pair_shot_noise(),
+        ds_cross_shot_noise=_cross_shot_noise(),
+        terms="gaussian+ssc",
+        ssc_sigma_b2=1.0e-4,
+    )
+    nk = len(k)
+    block_00 = cov_ssc[:nk, :nk]
+    block_02 = cov_ssc[:nk, nk:2 * nk]
+    assert np.any(np.abs(block_00 - np.diag(np.diag(block_00))) > 0.0)
+    assert np.any(np.abs(block_02 - np.diag(np.diag(block_02))) > 0.0)
+    assert np.any(np.abs(cov_ssc - cov_gauss) > 0.0)
+
+
+def test_analytic_pqg_ssc_zero_variance_matches_gaussian():
+    k = np.array([0.05, 0.10, 0.15])
+    cov_gauss, _ = analytic_pqg_covariance(
+        k,
+        _fiducial_pqg_poles(k),
+        _fiducial_pqq_poles(k),
+        _fiducial_pgg_poles(k),
+        ells=ELLS,
+        volume=8.0e8,
+        ds_labels=DS_LABELS,
+        galaxy_shot_noise=200.0,
+        ds_pair_shot_noise=_pair_shot_noise(),
+        ds_cross_shot_noise=_cross_shot_noise(),
+    )
+    cov_zero, _ = analytic_pqg_covariance(
+        k,
+        _fiducial_pqg_poles(k),
+        _fiducial_pqq_poles(k),
+        _fiducial_pgg_poles(k),
+        ells=ELLS,
+        volume=8.0e8,
+        ds_labels=DS_LABELS,
+        galaxy_shot_noise=200.0,
+        ds_pair_shot_noise=_pair_shot_noise(),
+        ds_cross_shot_noise=_cross_shot_noise(),
+        terms="gaussian+ssc",
+        ssc_sigma_b2=0.0,
+    )
+    np.testing.assert_allclose(cov_zero, cov_gauss)

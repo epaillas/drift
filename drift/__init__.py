@@ -4,6 +4,7 @@ from .covariance import (
     analytic_pqg_covariance,
     analytic_pqq_covariance,
     correlation_matrix,
+    estimate_ssc_sigma_b2,
     plot_correlation_matrix,
 )
 from .emulators import DensitySplitGalaxyPowerSpectrumEmulator, GalaxyPowerSpectrumEmulator
@@ -64,6 +65,7 @@ __all__ = [
     "compute_one_loop_matter",
     "compute_sigma_dd",
     "correlation_matrix",
+    "estimate_ssc_sigma_b2",
     "dspair_eft_pkmu",
     "dspair_pkmu",
     "ds_galaxy_eft_pkmu",

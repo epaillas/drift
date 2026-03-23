@@ -8,7 +8,12 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.inference_pgg import _resolve_pgg_covariance
+from scripts.inference_pgg import (
+    DEFAULT_EFFECTIVE_CNG_AMPLITUDE,
+    _resolve_cng_amplitude,
+    _resolve_pgg_covariance,
+    _resolve_ssc_sigma_b2,
+)
 
 
 def _args(**overrides):
@@ -24,6 +29,7 @@ def _args(**overrides):
         analytic_cov_terms="gaussian",
         cng_amplitude=0.0,
         cng_coherence=0.35,
+        ssc_sigma_b2=None,
     )
     base.update(overrides)
     return Namespace(**base)
@@ -85,6 +91,44 @@ def test_resolve_pgg_covariance_forwards_effective_cng_terms():
 
     assert np.any(np.abs(cov_cng - cov_gauss) > 0.0)
     assert np.any(np.abs(cov_cng[:3, :3] - np.diag(np.diag(cov_cng[:3, :3]))) > 0.0)
+
+
+def test_resolve_cng_amplitude_uses_nonzero_default_for_effective_cng():
+    args = _args(
+        analytic_cov=True,
+        analytic_cov_terms="gaussian+effective_cng",
+        cng_amplitude=None,
+    )
+    assert _resolve_cng_amplitude(args) == DEFAULT_EFFECTIVE_CNG_AMPLITUDE
+
+
+def test_resolve_cng_amplitude_preserves_explicit_zero():
+    args = _args(
+        analytic_cov=True,
+        analytic_cov_terms="gaussian+effective_cng",
+        cng_amplitude=0.0,
+    )
+    assert _resolve_cng_amplitude(args) == 0.0
+
+
+def test_resolve_ssc_sigma_b2_estimates_nonzero_default_for_ssc():
+    args = _args(
+        analytic_cov=True,
+        box_volume=1.0e9,
+        analytic_cov_terms="gaussian+ssc",
+        ssc_sigma_b2=None,
+    )
+    assert _resolve_ssc_sigma_b2(args) > 0.0
+
+
+def test_resolve_ssc_sigma_b2_preserves_explicit_value():
+    args = _args(
+        analytic_cov=True,
+        box_volume=1.0e9,
+        analytic_cov_terms="gaussian+ssc",
+        ssc_sigma_b2=2.5e-4,
+    )
+    assert _resolve_ssc_sigma_b2(args) == 2.5e-4
 
 
 def test_resolve_pgg_covariance_prefers_diagonal_for_synthetic_without_analytic():

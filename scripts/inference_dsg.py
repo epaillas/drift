@@ -26,6 +26,7 @@ from drift.utils.cosmology import (
 from drift.emulators.density_split import TemplateEmulator
 from drift.theory.galaxy.power_spectrum import _compute_loop_templates
 from drift.analytic_marginalization import MarginalizedLikelihood
+from drift.covariance import estimate_ssc_sigma_b2
 from drift.io import analytic_pqg_covariance, load_measurements, diagonal_covariance, taylor_cache_key
 from drift.synthetic import make_synthetic_dsg
 from drift.theory.density_split.config import load_config
@@ -54,6 +55,7 @@ ELLS      = (0, 2)
 QUANTILES = (1, 5)
 
 VARY_COSMO = False
+DEFAULT_EFFECTIVE_CNG_AMPLITUDE = 0.2
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +242,30 @@ def _validate_analytic_covariance_inputs(args):
         )
 
 
+def _resolve_cng_amplitude(args):
+    """Return the effective CNG amplitude after applying CLI defaults."""
+    amplitude = getattr(args, "cng_amplitude", None)
+    if amplitude is not None:
+        return float(amplitude)
+
+    terms = str(getattr(args, "analytic_cov_terms", "gaussian"))
+    if "effective_cng" in terms.lower():
+        return DEFAULT_EFFECTIVE_CNG_AMPLITUDE
+    return 0.0
+
+
+def _resolve_ssc_sigma_b2(args):
+    """Return the SSC long-mode variance after applying CLI defaults."""
+    sigma_b2 = getattr(args, "ssc_sigma_b2", None)
+    if sigma_b2 is not None:
+        return float(sigma_b2)
+
+    terms = str(getattr(args, "analytic_cov_terms", "gaussian"))
+    if "ssc" in terms.lower():
+        return estimate_ssc_sigma_b2(getattr(args, "box_volume", None), z=Z)
+    return None
+
+
 def _quantile_labels(quantiles):
     """Return ordered DS labels for the selected quantiles."""
     return tuple(f"DS{q}" for q in quantiles)
@@ -377,6 +403,9 @@ def _resolve_dsg_covariance(args, k, data_y_masked, mask, quantiles, fiducial_bl
         mask=mask,
         rescale=cov_rescale,
         terms=getattr(args, "analytic_cov_terms", "gaussian"),
+        cng_amplitude=_resolve_cng_amplitude(args),
+        cng_coherence=getattr(args, "cng_coherence", 0.35),
+        ssc_sigma_b2=_resolve_ssc_sigma_b2(args),
     )
     print(f"Using analytic cubic-box DSG covariance with shape {cov.shape}")
     return cov, precision
@@ -830,8 +859,9 @@ def main():
         default="gaussian",
         metavar="TERMS",
         help=(
-            "Analytic covariance terms to include. Only 'gaussian' is implemented "
-            "for DSG; beyond-Gaussian options are placeholders."
+            "Analytic covariance terms to include. Supported values are "
+            "'gaussian', 'gaussian+effective_cng', 'gaussian+ssc', and "
+            "'gaussian+effective_cng+ssc'."
         ),
     )
     parser.add_argument(
@@ -881,6 +911,35 @@ def main():
         default=0.0,
         metavar="PQG0",
         help="Constant DS×g cross shot-noise power applied to each quantile.",
+    )
+    parser.add_argument(
+        "--cng-amplitude",
+        type=float,
+        default=None,
+        metavar="A",
+        help=(
+            "Amplitude of the effective connected covariance term. "
+            f"Defaults to {DEFAULT_EFFECTIVE_CNG_AMPLITUDE} when "
+            "--analytic-cov-terms includes effective_cng, otherwise 0."
+        ),
+    )
+    parser.add_argument(
+        "--cng-coherence",
+        type=float,
+        default=0.35,
+        metavar="SIGMA",
+        help="Log-k coherence length of the effective connected covariance term.",
+    )
+    parser.add_argument(
+        "--ssc-sigma-b2",
+        type=float,
+        default=None,
+        metavar="VAR",
+        help=(
+            "Long-mode density variance for the SSC term. "
+            "If omitted and --analytic-cov-terms includes ssc, it is estimated "
+            "from --box-volume at the script redshift."
+        ),
     )
     parser.add_argument(
         "--cov-config",

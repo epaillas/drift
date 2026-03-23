@@ -39,13 +39,23 @@ def main():
     parser.add_argument("--analytic-cov", action="store_true",
                         help="Plot analytic cubic-box covariance.")
     parser.add_argument("--analytic-cov-terms", type=str, default="gaussian", metavar="TERMS",
-                        help="Analytic covariance terms: 'gaussian' or 'gaussian+effective_cng'.")
+                        help="Analytic covariance terms: 'gaussian', 'gaussian+effective_cng', 'gaussian+ssc', or 'gaussian+effective_cng+ssc'.")
     parser.add_argument("--cov-rescale", type=float, default=64.0, metavar="FACTOR")
     parser.add_argument("--box-volume", type=float, default=None, metavar="V")
     parser.add_argument("--number-density", type=float, default=None, metavar="N")
     parser.add_argument("--shot-noise", type=float, default=None, metavar="P0")
-    parser.add_argument("--cng-amplitude", type=float, default=0.0, metavar="A")
+    parser.add_argument(
+        "--cng-amplitude",
+        type=float,
+        default=None,
+        metavar="A",
+        help=(
+            "Amplitude of the effective connected covariance term. "
+            "Defaults to the shared nonzero value when effective_cng is enabled."
+        ),
+    )
     parser.add_argument("--cng-coherence", type=float, default=0.35, metavar="SIGMA")
+    parser.add_argument("--ssc-sigma-b2", type=float, default=None, metavar="VAR")
     args = parser.parse_args()
 
     k, poles = load_pgg_measurements(MEAS_PATH, ells=ELLS, rebin=args.rebin, kmin=args.kmin)

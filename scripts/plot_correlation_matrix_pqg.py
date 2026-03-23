@@ -11,6 +11,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from drift.covariance import estimate_ssc_sigma_b2
 from drift.covariance import plot_correlation_matrix
 from drift.io import diagonal_covariance
 from inference_dsg import (
@@ -26,6 +27,25 @@ from inference_dsg import (
 from drift.io import analytic_pqg_covariance
 
 OUTPUT_DIR = Path(__file__).parents[1] / "outputs"
+DEFAULT_EFFECTIVE_CNG_AMPLITUDE = 0.2
+
+
+def _resolve_cng_amplitude(args):
+    amplitude = getattr(args, "cng_amplitude", None)
+    if amplitude is not None:
+        return float(amplitude)
+    if "effective_cng" in str(getattr(args, "analytic_cov_terms", "gaussian")).lower():
+        return DEFAULT_EFFECTIVE_CNG_AMPLITUDE
+    return 0.0
+
+
+def _resolve_ssc_sigma_b2(args):
+    sigma_b2 = getattr(args, "ssc_sigma_b2", None)
+    if sigma_b2 is not None:
+        return float(sigma_b2)
+    if "ssc" in str(getattr(args, "analytic_cov_terms", "gaussian")).lower():
+        return estimate_ssc_sigma_b2(args.box_volume, z=0.5)
+    return None
 
 
 def _parse_quantiles(values):
@@ -70,13 +90,17 @@ def main():
     parser.add_argument("--analytic-cov", action="store_true",
                         help="Plot analytic cubic-box covariance.")
     parser.add_argument("--analytic-cov-terms", type=str, default="gaussian", metavar="TERMS",
-                        help="Analytic covariance terms. Only 'gaussian' is currently supported.")
+                        help="Analytic covariance terms: 'gaussian', 'gaussian+effective_cng', 'gaussian+ssc', or 'gaussian+effective_cng+ssc'.")
     parser.add_argument("--cov-rescale", type=float, default=64.0, metavar="FACTOR")
     parser.add_argument("--box-volume", type=float, default=1.0e9, metavar="V")
     parser.add_argument("--galaxy-shot-noise", type=float, default=400.0, metavar="P0")
     parser.add_argument("--ds-pair-auto-shot-noise", type=float, default=250.0, metavar="PQQ0")
     parser.add_argument("--ds-pair-cross-shot-noise", type=float, default=40.0, metavar="PQQX")
     parser.add_argument("--ds-cross-shot-noise", type=float, default=0.0, metavar="PQG0")
+    parser.add_argument("--cng-amplitude", type=float, default=None, metavar="A",
+                        help="Defaults to 0.2 when effective_cng is enabled, otherwise 0.")
+    parser.add_argument("--cng-coherence", type=float, default=0.35, metavar="SIGMA")
+    parser.add_argument("--ssc-sigma-b2", type=float, default=None, metavar="VAR")
     args = parser.parse_args()
 
     if args.diag_cov and args.analytic_cov:
@@ -125,6 +149,9 @@ def main():
             mask=full_mask,
             rescale=args.cov_rescale,
             terms=args.analytic_cov_terms,
+            cng_amplitude=_resolve_cng_amplitude(args),
+            cng_coherence=args.cng_coherence,
+            ssc_sigma_b2=_resolve_ssc_sigma_b2(args),
         )
 
     label_str = ", ".join(labels)

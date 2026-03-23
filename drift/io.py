@@ -198,7 +198,8 @@ def diagonal_covariance(data_y, noise_frac=0.05, floor=50.0, rescale=1.0):
 def analytic_pgg_covariance(k_data, poles, ells, volume,
                             number_density=None, shot_noise=None,
                             mask=None, rescale=1.0, terms="gaussian",
-                            cng_amplitude=0.0, cng_coherence=0.35):
+                            cng_amplitude=0.0, cng_coherence=0.35,
+                            ssc_sigma_b2=None):
     """Fixed fiducial analytic covariance for galaxy power-spectrum multipoles."""
     return _analytic_pgg_covariance(
         k_data,
@@ -212,12 +213,15 @@ def analytic_pgg_covariance(k_data, poles, ells, volume,
         terms=terms,
         cng_amplitude=cng_amplitude,
         cng_coherence=cng_coherence,
+        ssc_sigma_b2=ssc_sigma_b2,
     )
 
 
 def analytic_pqq_covariance(k_data, poles, ells, volume, pair_order,
                             shot_noise, mask=None, rescale=1.0,
-                            terms="gaussian", mu_points=256):
+                            terms="gaussian", mu_points=256,
+                            cng_amplitude=0.0, cng_coherence=0.35,
+                            ssc_sigma_b2=None):
     """Fixed fiducial analytic covariance for DS-pair power-spectrum multipoles."""
     return _analytic_pqq_covariance(
         k_data,
@@ -230,6 +234,9 @@ def analytic_pqq_covariance(k_data, poles, ells, volume, pair_order,
         rescale=rescale,
         terms=terms,
         mu_points=mu_points,
+        cng_amplitude=cng_amplitude,
+        cng_coherence=cng_coherence,
+        ssc_sigma_b2=ssc_sigma_b2,
     )
 
 
@@ -237,7 +244,8 @@ def analytic_pqg_covariance(k_data, pqg_poles, pqq_poles, pgg_poles, ells,
                             volume, ds_labels, galaxy_shot_noise,
                             ds_pair_shot_noise, ds_cross_shot_noise=None,
                             mask=None, rescale=1.0, terms="gaussian",
-                            mu_points=256):
+                            mu_points=256, cng_amplitude=0.0,
+                            cng_coherence=0.35, ssc_sigma_b2=None):
     """Fixed fiducial analytic covariance for DS-galaxy power-spectrum multipoles."""
     return _analytic_pqg_covariance(
         k_data,
@@ -254,6 +262,9 @@ def analytic_pqg_covariance(k_data, pqg_poles, pqq_poles, pgg_poles, ells,
         rescale=rescale,
         terms=terms,
         mu_points=mu_points,
+        cng_amplitude=cng_amplitude,
+        cng_coherence=cng_coherence,
+        ssc_sigma_b2=ssc_sigma_b2,
     )
 
 
