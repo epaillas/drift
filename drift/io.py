@@ -56,7 +56,7 @@ def load_predictions(path) -> tuple:
     return k, multipoles_per_bin
 
 
-def load_measurements(path, nquantiles=5, ells=(0, 2, 4), rebin=5) -> tuple:
+def load_measurements(path, nquantiles=5, ells=(0, 2, 4), rebin=5, kmin=0.0, kmax=np.inf) -> tuple:
     """Load measured multipoles from an lsstypes HDF5 file.
 
     Reads an ObservableTree produced by ACM's DensitySplit.quantile_data_power()
@@ -76,6 +76,8 @@ def load_measurements(path, nquantiles=5, ells=(0, 2, 4), rebin=5) -> tuple:
     from lsstypes import read as lss_read
 
     tree = lss_read(str(path)).select(k=slice(0, None, rebin))
+    if kmin > 0.0 or kmax < np.inf:
+        tree = tree.select(k=(kmin, kmax))
 
     k = None
     multipoles_per_bin = {}
@@ -131,7 +133,7 @@ def mock_covariance(mock_dir, statistic, ells, k_data=None, mask=None,
     Parameters
     ----------
     mock_dir : path  — directory containing mock measurement files
-    statistic : str  — "pgg" or "ds"
+    statistic : str  — "pgg", "ds", or "pqq_auto"
     ells : tuple of int
     k_data : np.ndarray, optional  — measurement k-grid; if the mock k-grid
         differs, each mock is interpolated onto k_data before computing the
@@ -140,45 +142,26 @@ def mock_covariance(mock_dir, statistic, ells, k_data=None, mask=None,
     rescale : float  — divide covariance by this factor (default 1.0)
     rebin : int  — rebinning factor for mock loading
     **stat_kwargs : forwarded to statistic-specific loader
-        For "ds": nquantiles (int), quantiles (tuple of int)
+        For "ds" / "pqq_auto": nquantiles (int), quantiles (tuple of int)
 
     Returns
     -------
     cov : np.ndarray  shape (n_data, n_data)
     precision : np.ndarray  shape (n_data, n_data)
     """
-    cache_hash = _mock_cache_key(statistic, ells, rebin, **stat_kwargs)
-    cache_path = Path(mock_dir) / f".mock_cache_{cache_hash}.npz"
-
-    if cache_path.exists():
-        cached = np.load(cache_path)
-        k_mock, mock_matrix = cached["k"], cached["mock_matrix"]
-    elif statistic == "pgg":
-        k_mock, mock_matrix = _load_pgg_mocks(mock_dir, ells=ells, rebin=rebin,
-                                               kmin=stat_kwargs.get("kmin", 0.0),
-                                               kmax=stat_kwargs.get("kmax", np.inf))
-        np.savez(cache_path, k=k_mock, mock_matrix=mock_matrix)
-    elif statistic == "ds":
-        k_mock, mock_matrix = _load_ds_mocks(mock_dir, ells=ells, rebin=rebin,
-                                              nquantiles=stat_kwargs.get("nquantiles", 5),
-                                              quantiles=stat_kwargs.get("quantiles"))
-        np.savez(cache_path, k=k_mock, mock_matrix=mock_matrix)
-    else:
-        raise ValueError(f"Unknown statistic: {statistic!r}. Expected 'pgg' or 'ds'.")
-
-    # Interpolate mock data vectors onto measurement k-grid if they differ
-    if k_data is not None and not np.array_equal(k_mock, k_data):
-        n_mocks = mock_matrix.shape[0]
-        nk_mock, nk_data = len(k_mock), len(k_data)
-        n_blocks = mock_matrix.shape[1] // nk_mock
-        interp = np.empty((n_mocks, n_blocks * nk_data))
-        for b in range(n_blocks):
-            src = mock_matrix[:, b * nk_mock:(b + 1) * nk_mock]
-            for i in range(n_mocks):
-                interp[i, b * nk_data:(b + 1) * nk_data] = np.interp(k_data, k_mock, src[i])
-        mock_matrix = interp
-
+    mock_matrix = _load_mock_matrix(
+        mock_dir, statistic, ells, k_data=k_data, rebin=rebin, **stat_kwargs
+    )
     return _compute_covariance(mock_matrix, mask=mask, rescale=rescale)
+
+
+def mock_covariance_matrix(mock_dir, statistic, ells, k_data=None, mask=None,
+                           rescale=1.0, rebin=13, **stat_kwargs):
+    """Load mocks from directory and compute the sample covariance matrix only."""
+    mock_matrix = _load_mock_matrix(
+        mock_dir, statistic, ells, k_data=k_data, rebin=rebin, **stat_kwargs
+    )
+    return _sample_covariance(mock_matrix, mask=mask, rescale=rescale)
 
 
 def diagonal_covariance(data_y, noise_frac=0.05, floor=50.0, rescale=1.0):
@@ -291,10 +274,12 @@ def _mock_cache_key(statistic, ells, rebin, **stat_kwargs):
     if statistic == "pgg":
         parts.append(f"kmin={stat_kwargs.get('kmin', 0.0)}")
         parts.append(f"kmax={stat_kwargs.get('kmax', np.inf)}")
-    elif statistic == "ds":
+    elif statistic in {"ds", "pqq_auto"}:
         parts.append(f"nq={stat_kwargs.get('nquantiles', 5)}")
         q = stat_kwargs.get('quantiles')
         parts.append(f"q={tuple(q) if q is not None else None}")
+        parts.append(f"kmin={stat_kwargs.get('kmin', 0.0)}")
+        parts.append(f"kmax={stat_kwargs.get('kmax', np.inf)}")
     key_str = "|".join(parts)
     return hashlib.sha256(key_str.encode()).hexdigest()[:12]
 
@@ -313,15 +298,41 @@ def _load_pgg_mocks(directory, ells=(0, 2), rebin=13, kmin=0.0, kmax=np.inf):
     return k, np.array(rows)
 
 
-def _load_ds_mocks(directory, nquantiles=5, quantiles=None, ells=(0, 2), rebin=5):
-    """Load DS mock files -> (k, mock_matrix)."""
+def _load_ds_mocks(directory, nquantiles=5, quantiles=None, ells=(0, 2), rebin=5,
+                   kmin=0.0, kmax=np.inf):
+    """Load DS-galaxy mock files -> (k, mock_matrix)."""
     if quantiles is None:
         quantiles = range(1, nquantiles + 1)
-    paths = sorted(Path(directory).glob("*.h5"))
+    paths = sorted(Path(directory).glob("dsc_pkqg_poles_ph*.h5"))
     rows = []
     k = None
     for p in paths:
-        k_i, meas = load_measurements(p, nquantiles=nquantiles, ells=ells, rebin=rebin)
+        k_i, meas = load_measurements(
+            p, nquantiles=nquantiles, ells=ells, rebin=rebin, kmin=kmin, kmax=kmax
+        )
+        if k is None:
+            k = k_i
+        row = np.concatenate([
+            meas[f"DS{q}"][ell]
+            for q in quantiles
+            for ell in ells
+        ])
+        rows.append(row)
+    return k, np.array(rows)
+
+
+def _load_pqq_auto_mocks(directory, nquantiles=5, quantiles=None, ells=(0, 2), rebin=5,
+                         kmin=0.0, kmax=np.inf):
+    """Load DS auto-pair mock files -> (k, mock_matrix)."""
+    if quantiles is None:
+        quantiles = range(1, nquantiles + 1)
+    paths = sorted(Path(directory).glob("dsc_pkqq_poles_ph*.h5"))
+    rows = []
+    k = None
+    for p in paths:
+        k_i, meas = load_measurements(
+            p, nquantiles=nquantiles, ells=ells, rebin=rebin, kmin=kmin, kmax=kmax
+        )
         if k is None:
             k = k_i
         row = np.concatenate([
@@ -335,6 +346,7 @@ def _load_ds_mocks(directory, nquantiles=5, quantiles=None, ells=(0, 2), rebin=5
 
 def _compute_covariance(mock_matrix, mask=None, rescale=1.0):
     """np.cov + Hartlap correction -> (cov, precision)."""
+    cov = _sample_covariance(mock_matrix, mask=mask, rescale=rescale)
     vecs = mock_matrix[:, mask] if mask is not None else mock_matrix
     n_mocks, n_data = vecs.shape
     if n_mocks <= n_data:
@@ -342,11 +354,74 @@ def _compute_covariance(mock_matrix, mask=None, rescale=1.0):
             f"Covariance matrix is singular: n_mocks={n_mocks} <= n_data={n_data}. "
             "Apply a kmax cut to reduce n_data below n_mocks."
         )
-    cov = np.cov(vecs.T) / rescale                  # (n_data, n_data)
     precision = np.linalg.inv(cov)
     hartlap = (n_mocks - n_data - 2) / (n_mocks - 1)
     precision *= hartlap
     return cov, precision
+
+
+def _sample_covariance(mock_matrix, mask=None, rescale=1.0):
+    """Return the sample covariance matrix without inverting it."""
+    vecs = mock_matrix[:, mask] if mask is not None else mock_matrix
+    return np.cov(vecs.T) / rescale
+
+
+def _load_mock_matrix(mock_dir, statistic, ells, k_data=None, rebin=13, **stat_kwargs):
+    """Load and optionally interpolate the mock data matrix."""
+    cache_hash = _mock_cache_key(statistic, ells, rebin, **stat_kwargs)
+    cache_path = Path(mock_dir) / f".mock_cache_{cache_hash}.npz"
+
+    if cache_path.exists():
+        cached = np.load(cache_path)
+        k_mock, mock_matrix = cached["k"], cached["mock_matrix"]
+    elif statistic == "pgg":
+        k_mock, mock_matrix = _load_pgg_mocks(
+            mock_dir,
+            ells=ells,
+            rebin=rebin,
+            kmin=stat_kwargs.get("kmin", 0.0),
+            kmax=stat_kwargs.get("kmax", np.inf),
+        )
+        np.savez(cache_path, k=k_mock, mock_matrix=mock_matrix)
+    elif statistic == "ds":
+        k_mock, mock_matrix = _load_ds_mocks(
+            mock_dir,
+            ells=ells,
+            rebin=rebin,
+            nquantiles=stat_kwargs.get("nquantiles", 5),
+            quantiles=stat_kwargs.get("quantiles"),
+            kmin=stat_kwargs.get("kmin", 0.0),
+            kmax=stat_kwargs.get("kmax", np.inf),
+        )
+        np.savez(cache_path, k=k_mock, mock_matrix=mock_matrix)
+    elif statistic == "pqq_auto":
+        k_mock, mock_matrix = _load_pqq_auto_mocks(
+            mock_dir,
+            ells=ells,
+            rebin=rebin,
+            nquantiles=stat_kwargs.get("nquantiles", 5),
+            quantiles=stat_kwargs.get("quantiles"),
+            kmin=stat_kwargs.get("kmin", 0.0),
+            kmax=stat_kwargs.get("kmax", np.inf),
+        )
+        np.savez(cache_path, k=k_mock, mock_matrix=mock_matrix)
+    else:
+        raise ValueError(
+            f"Unknown statistic: {statistic!r}. Expected 'pgg', 'ds', or 'pqq_auto'."
+        )
+
+    if k_data is not None and not np.array_equal(k_mock, k_data):
+        n_mocks = mock_matrix.shape[0]
+        nk_mock, nk_data = len(k_mock), len(k_data)
+        n_blocks = mock_matrix.shape[1] // nk_mock
+        interp = np.empty((n_mocks, n_blocks * nk_data))
+        for b in range(n_blocks):
+            src = mock_matrix[:, b * nk_mock:(b + 1) * nk_mock]
+            for i in range(n_mocks):
+                interp[i, b * nk_data:(b + 1) * nk_data] = np.interp(k_data, k_mock, src[i])
+        mock_matrix = interp
+
+    return mock_matrix
 
 
 def save_text(path, k: np.ndarray, multipoles_per_bin: dict) -> None:
