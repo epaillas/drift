@@ -1,9 +1,10 @@
 # Theoretical Models in `drift`
 
-This document describes the theoretical models implemented in the `drift` package for computing galaxy power spectrum multipoles. Two observables are supported:
+This document describes the theoretical models implemented in the `drift` package for computing galaxy power spectrum multipoles. Three observables are supported:
 
 - **$P_{gg}(\mathbf{k})$** — Galaxy auto-power spectrum
 - **$P_{qg}(\mathbf{k})$** — Density-split × galaxy cross-power spectrum
+- **$P_{q_i q_j}(\mathbf{k})$** — Density-split pair power spectrum
 
 Both are functions of wavenumber $k$ and angle-to-line-of-sight cosine $\mu$, and are projected onto Legendre multipoles $\ell = 0, 2, 4$ for comparison with observations.
 
@@ -218,6 +219,116 @@ $$+ s_0 + s_2\, k^2\mu^2$$
 
 ---
 
+## Density-Split Pair Power Spectrum $P_{q_i q_j}(k, \mu)$
+
+The density-split bins are treated as effective tracers of the smoothed density field. At leading order, each bin contributes a smoothed response factor built from the linear matter field and the smoothing kernel $W_R(k)$. This follows the same large-scale bias logic used for density-split clustering analyses, where each quantile is modeled as a biased tracer of the smoothed environment field.
+
+For each leg we define
+
+$$B_{q_i}(k) \equiv b_{q_i} + c_{q_i}(kR)^2,$$
+
+so the pair spectrum always carries the matter kernel $P_\mathrm{lin}(k)\,W_R(k)^2$.
+
+The model is symmetric by construction:
+
+$$P_{q_i q_j}(k,\mu) = P_{q_j q_i}(k,\mu).$$
+
+### DS angular models
+
+#### `ds_model="baseline"`
+
+The density split is selected in real space on both legs, so the pair spectrum is isotropic even when evaluated in redshift space:
+
+$$P_{q_i q_j}(k,\mu) = B_{q_i}(k)\,B_{q_j}(k)\,P_\mathrm{lin}(k)\,W_R(k)^2.$$
+
+Only the monopole is non-zero at tree level.
+
+#### `ds_model="rsd_selection"`
+
+Both density-split legs are selected in redshift space and acquire Kaiser factors:
+
+$$P_{q_i q_j}(k,\mu) = B_{q_i}(k)\,B_{q_j}(k)\,\left(1 + f\mu^2\right)^2 P_\mathrm{lin}(k)\,W_R(k)^2.$$
+
+Writing $A_{ij}(k) \equiv B_{q_i}(k) B_{q_j}(k) P_\mathrm{lin}(k) W_R(k)^2$, the tree spectrum is
+
+$$P_{q_i q_j}(k,\mu) = A_{ij}(k)\left[1 + 2f\mu^2 + f^2\mu^4\right],$$
+
+with multipoles
+
+$$P_0 = A_{ij}\left(1 + \frac{2f}{3} + \frac{f^2}{5}\right), \qquad P_2 = A_{ij}\left(\frac{4f}{3} + \frac{4f^2}{7}\right), \qquad P_4 = A_{ij}\left(\frac{8f^2}{35}\right).$$
+
+#### `ds_model="phenomenological"`
+
+Each density-split leg carries an independent free anisotropy parameter:
+
+$$F_{q_i}(k,\mu) = B_{q_i}(k) + \beta_{q_i} f\mu^2,$$
+
+so
+
+$$P_{q_i q_j}(k,\mu) = F_{q_i}(k,\mu)\,F_{q_j}(k,\mu)\,P_\mathrm{lin}(k)\,W_R(k)^2.$$
+
+Expanding the angular dependence,
+
+$$P_{q_i q_j}(k,\mu) = P_\mathrm{lin} W_R^2 \left[B_{q_i}B_{q_j} + f(B_{q_i}\beta_{q_j} + B_{q_j}\beta_{q_i})\mu^2 + \beta_{q_i}\beta_{q_j} f^2 \mu^4\right].$$
+
+Setting $\beta_{q_i} = \beta_{q_j} = 0$ recovers the baseline model exactly.
+
+### EFT modes for $P_{q_i q_j}$
+
+#### `mode="tree"`
+
+Tree-level only, with the EFT linear DS biases $b_{q1,i}$ and $b_{q1,j}$ replacing the tree-level $b_{q_i}$ parameters:
+
+$$P_{q_i q_j}^\mathrm{tree}(k,\mu) = F_{q_i}^{(1)}(k,\mu)\,F_{q_j}^{(1)}(k,\mu)\,P_\mathrm{lin}(k)\,W_R(k)^2,$$
+
+where each $F_{q}^{(1)}$ is built from $b_{q1}$ and the chosen DS angular model.
+
+#### `mode="eft_ct"`
+
+Two DS higher-derivative counterterms are added, one for each leg:
+
+$$P_{ct,i}^{DS}(k,\mu) = b_{q,\nabla^2,i}\,(kR)^2\,\widetilde{P}_{q_i q_j}^{(i)}(k,\mu),$$
+
+$$P_{ct,j}^{DS}(k,\mu) = b_{q,\nabla^2,j}\,(kR)^2\,\widetilde{P}_{q_i q_j}^{(j)}(k,\mu).$$
+
+Here $\widetilde{P}_{q_i q_j}^{(i)}$ means the tree-level pair model evaluated with leg $i$ normalized to $b_{q1,i}=1$ while keeping the other leg physical; $\widetilde{P}_{q_i q_j}^{(j)}$ is defined analogously.
+
+The full EFT-counterterm model is
+
+$$P_{q_i q_j}^\mathrm{eft\_ct}(k,\mu) = P_{q_i q_j}^\mathrm{tree}(k,\mu) + P_{ct,i}^{DS}(k,\mu) + P_{ct,j}^{DS}(k,\mu).$$
+
+#### `mode="eft"`
+
+An isotropic DS-pair stochastic contribution is added:
+
+$$P_{q_i q_j}^\mathrm{eft}(k,\mu) = P_{q_i q_j}^\mathrm{eft\_ct}(k,\mu) + s_{qq,0} + s_{qq,2} k^2.$$
+
+Unlike the galaxy stochastic term used in $P_{gg}$, this correction is independent of $\mu$.
+
+#### `mode="one_loop"`
+
+The matter kernel is promoted from $P_\mathrm{lin}$ to the one-loop SPT matter spectrum while keeping the DS angular factors multiplicative:
+
+$$P_{q_i q_j}^\mathrm{1\text{-}loop}(k,\mu) = F_{q_i}^{(1)}(k,\mu)\,F_{q_j}^{(1)}(k,\mu)\,\left[P_\mathrm{lin}(k) + P_{22}(k) + P_{13}(k)\right] W_R(k)^2.$$
+
+The two DS higher-derivative counterterms and the isotropic stochastic term are then added on top.
+
+> **Note:** the quadratic and tidal DS operators ($b_{q2}$ and $b_{qK^2}$) are not implemented for either leg in `mode="one_loop"`. The code raises `NotImplementedError` if any of these parameters are non-zero.
+
+### Parameter table for $P_{q_i q_j}$
+
+| Parameter | Description | Units | Active modes |
+|---|---|---|---|
+| $b_{q1,i}, b_{q1,j}$ | Linear DS biases on the two legs | — | all |
+| $b_{q2,i}, b_{q2,j}$ | Quadratic DS biases | — | `one_loop` (not yet implemented) |
+| $b_{qK^2,i}, b_{qK^2,j}$ | Tidal DS biases | — | `one_loop` (not yet implemented) |
+| $b_{q,\nabla^2,i}, b_{q,\nabla^2,j}$ | DS higher-derivative counterterms on each leg | — | `eft_ct`, `eft`, `one_loop` |
+| $\beta_{q_i}, \beta_{q_j}$ | Phenomenological DS anisotropy parameters | — | `phenomenological` model |
+| $s_{qq,0}$ | Isotropic DS-pair stochastic amplitude | $(h^{-1}\mathrm{Mpc})^3$ | `eft`, `one_loop` |
+| $s_{qq,2}$ | $k^2$ DS-pair stochastic amplitude | $(h^{-1}\mathrm{Mpc})^5$ | `eft`, `one_loop` |
+
+---
+
 ## One-Loop SPT Integrals
 
 ### $P_{22}$ — two-field loop
@@ -291,5 +402,13 @@ The matrix $\mathbf{A}$ (of size $n_\mathrm{lin} \times n_\mathrm{lin}$) is solv
 |---|---|---|---|---|---|
 | `tree` | none | — | — | — | $b_1$ (and $b_{q1}$, $\beta_q$) |
 | `eft_ct` | none | $c_0, c_2, c_4$; $b_{q,\nabla^2}$ | — | $P_{gg}$ only | $b_1$ |
-| `eft` | none | same as above | $s_0$, $s_2$ | $P_{gg}$ only | $b_1$ |
-| `one_loop` | 1-loop SPT | same as above | $s_0$, $s_2$ | $P_{gg}$ and $P_{qg}$ | $b_1, b_2, b_{s^2}, b_{3\mathrm{nl}}$ |
+| `eft` | none | same as above | $s_0$, $s_2$ or $s_{qq,0}$, $s_{qq,2}$ | $P_{gg}$ only | $b_1$ |
+| `one_loop` | 1-loop SPT | same as above | $s_0$, $s_2$ or $s_{qq,0}$, $s_{qq,2}$ | $P_{gg}$ and $P_{qg}$ | $b_1, b_2, b_{s^2}, b_{3\mathrm{nl}}$ |
+
+---
+
+## References
+
+- Kaiser, N. (1987), "Clustering in real space and in redshift space", *MNRAS* 227, 1. DOI: [10.1093/mnras/227.1.1](https://doi.org/10.1093/mnras/227.1.1)
+- Ivanov, M., Simonovic, M., and Zaldarriaga, M. (2020), "Cosmological parameters from the BOSS galaxy power spectrum", for the EFT and one-loop redshift-space large-scale-structure modeling context used here. arXiv: [2003.00577](https://arxiv.org/abs/2003.00577)
+- Paillas, E. et al. (2023), "Constraining $\nu\Lambda$CDM with density-split clustering", for the interpretation of density-split quantiles as effective large-scale tracers of the smoothed density field. DOI: [10.1093/mnras/stad1349](https://doi.org/10.1093/mnras/stad1349)

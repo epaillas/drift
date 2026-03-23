@@ -34,7 +34,7 @@ def _compute_loop_templates(k, plin_func):
     return {"p22": p22, "p13": p13, **bias, **vel}
 
 
-def galaxy_spectrum_mu(k, mu, z, cosmo, b1, space="redshift"):
+def galaxy_pkmu(k, mu, z, cosmo, b1, space="redshift"):
     """Tree-level Kaiser galaxy auto-power spectrum P_gg(k, mu).
 
     In redshift space: P_gg = (b1 + f*mu^2)^2 * P_lin(k)
@@ -70,7 +70,7 @@ def galaxy_spectrum_mu(k, mu, z, cosmo, b1, space="redshift"):
     return plin[:, np.newaxis] * kaiser[np.newaxis, :] ** 2
 
 
-def galaxy_eft_spectrum_mu(
+def galaxy_eft_pkmu(
     k, mu, z, cosmo, gal_params, space="redshift", mode="eft_ct", ir_resum=False
 ):
     """EFT galaxy auto-power spectrum P_gg(k, mu).
@@ -138,7 +138,7 @@ def galaxy_eft_spectrum_mu(
     f = get_growth_rate(cosmo, z)
 
     if mode == "tree":
-        return galaxy_spectrum_mu(k, mu, z, cosmo, b1, space=space)
+        return galaxy_pkmu(k, mu, z, cosmo, b1, space=space)
 
     kaiser = b1 + f * mu ** 2   # (nmu,)
 
@@ -241,6 +241,6 @@ def galaxy_eft_spectrum_mu(
     return P
 
 
-pgg_mu = galaxy_spectrum_mu
-pgg_eft_mu = galaxy_eft_spectrum_mu
+pgg_mu = galaxy_pkmu
+pgg_eft_mu = galaxy_eft_pkmu
 GalaxyEFTParams = GalaxyEFTParameters

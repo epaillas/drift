@@ -97,4 +97,17 @@ def stochastic_term(
     return stoch_k[:, np.newaxis] * np.ones((1, len(mu)))
 
 
+def density_split_pair_stochastic_term(
+    k: np.ndarray,
+    mu: np.ndarray,
+    sqq0: float = 0.0,
+    sqq2: float = 0.0,
+) -> np.ndarray:
+    """Isotropic stochastic contribution for DS-pair spectra."""
+    k = np.asarray(k, dtype=float)
+    mu = np.asarray(mu, dtype=float)
+    stoch_k = sqq0 + sqq2 * k**2
+    return stoch_k[:, np.newaxis] * np.ones((1, len(mu)))
+
+
 ds_counterterm = density_split_counterterm
