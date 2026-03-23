@@ -1,10 +1,10 @@
 """Tree-level density-split power spectrum models in (k, mu) space."""
 
 import numpy as np
-from .cosmology import get_linear_power, get_growth_rate
-from .kernels import gaussian_kernel, tophat_kernel
-from .bias import DSSplitBin
-from .rsd import matter_rsd_factor, tracer_rsd_factor
+from ...utils.cosmology import get_growth_rate, get_linear_power
+from ...utils.kernels import gaussian_kernel, tophat_kernel
+from ...utils.rsd import matter_rsd_factor, tracer_rsd_factor
+from .bias import DensitySplitBin
 
 _VALID_DS_MODELS = ("baseline", "rsd_selection", "phenomenological")
 
@@ -18,12 +18,12 @@ def _get_kernel(kernel: str, k: np.ndarray, R: float) -> np.ndarray:
         raise ValueError(f"Unknown kernel '{kernel}'. Choose 'gaussian' or 'tophat'.")
 
 
-def pqm_mu(
+def density_split_matter_power_spectrum_mu(
     k: np.ndarray,
     mu: np.ndarray,
     z: float,
     cosmo,
-    ds_params: DSSplitBin,
+    ds_params: DensitySplitBin,
     R: float,
     kernel: str = "gaussian",
     space: str = "redshift",
@@ -123,12 +123,12 @@ def pqm_mu(
         raise ValueError(f"Unknown space '{space}'. Choose 'redshift' or 'real'.")
 
 
-def pqg_mu(
+def density_split_galaxy_power_spectrum_mu(
     k: np.ndarray,
     mu: np.ndarray,
     z: float,
     cosmo,
-    ds_params: DSSplitBin,
+    ds_params: DensitySplitBin,
     tracer_bias: float,
     R: float,
     kernel: str = "gaussian",
@@ -228,3 +228,8 @@ def pqg_mu(
         return amplitude[:, np.newaxis] * (tracer_bias * np.ones_like(mu))[np.newaxis, :]
     else:
         raise ValueError(f"Unknown space '{space}'. Choose 'redshift' or 'real'.")
+
+
+pqm_mu = density_split_matter_power_spectrum_mu
+pqg_mu = density_split_galaxy_power_spectrum_mu
+DSSplitBin = DensitySplitBin

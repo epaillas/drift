@@ -3,8 +3,8 @@
 import numpy as np
 import pytest
 
-from drift.cosmology import get_cosmology, get_linear_power
-from drift.one_loop import compute_P22, compute_P13, compute_one_loop_matter
+from drift.utils.cosmology import get_cosmology, get_linear_power
+from drift.utils.one_loop import compute_P22, compute_P13, compute_one_loop_matter
 
 
 @pytest.fixture(scope="module")

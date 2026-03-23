@@ -218,7 +218,7 @@ class OneLoopPowerGrid(LinearPowerGrid):
     def __init__(self, k, z, cosmo_ranges=None, fixed_params=None):
         super().__init__(k, z, cosmo_ranges, fixed_params)
 
-        from .galaxy_models import _compute_loop_templates
+        from ..theory.galaxy import _compute_loop_templates
 
         k = np.asarray(k, dtype=float)
         shape = tuple(len(v) for v in self._axis_values)

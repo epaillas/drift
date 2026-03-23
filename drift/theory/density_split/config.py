@@ -1,4 +1,4 @@
-"""Configuration dataclasses and YAML loader for DRIFT."""
+"""Configuration dataclasses and YAML loader for density-split theory."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import List, Optional
 
 import yaml
 
-from .bias import DSSplitBin
+from .bias import DensitySplitBin
 
 
 @dataclass
@@ -24,19 +24,19 @@ class CosmoConfig:
 
 
 @dataclass
-class DriftConfig:
-    """Top-level DRIFT configuration."""
+class DensitySplitTheoryConfig:
+    """Top-level density-split theory configuration."""
 
     cosmo: CosmoConfig = field(default_factory=CosmoConfig)
     z: float = 0.5
     R: float = 10.0          # smoothing scale in Mpc/h
     kernel: str = "gaussian"
-    split_bins: List[DSSplitBin] = field(default_factory=list)
+    split_bins: List[DensitySplitBin] = field(default_factory=list)
     tracer_bias: Optional[float] = None
 
 
-def load_config(path: str | Path) -> DriftConfig:
-    """Load a DRIFT configuration from a YAML file.
+def load_density_split_theory_config(path: str | Path) -> DensitySplitTheoryConfig:
+    """Load a density-split theory configuration from a YAML file.
 
     Parameters
     ----------
@@ -45,7 +45,7 @@ def load_config(path: str | Path) -> DriftConfig:
 
     Returns
     -------
-    DriftConfig
+    DensitySplitTheoryConfig
     """
     path = Path(path)
     with path.open() as f:
@@ -65,7 +65,7 @@ def load_config(path: str | Path) -> DriftConfig:
     # Density-split bins
     bins_raw = raw.get("split_bins", [])
     split_bins = [
-        DSSplitBin(
+        DensitySplitBin(
             label=b["label"],
             bq=float(b["bq"]),
             cq=float(b.get("cq", b.get("bq_nabla", 0.0))),
@@ -74,7 +74,7 @@ def load_config(path: str | Path) -> DriftConfig:
         for b in bins_raw
     ]
 
-    return DriftConfig(
+    return DensitySplitTheoryConfig(
         cosmo=cosmo,
         z=float(raw.get("z", 0.5)),
         R=float(raw.get("R", 10.0)),
@@ -82,3 +82,7 @@ def load_config(path: str | Path) -> DriftConfig:
         split_bins=split_bins,
         tracer_bias=raw.get("tracer_bias", None),
     )
+
+
+DriftConfig = DensitySplitTheoryConfig
+load_config = load_density_split_theory_config

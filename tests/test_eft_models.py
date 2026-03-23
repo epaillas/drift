@@ -3,13 +3,14 @@
 import numpy as np
 import pytest
 
-from drift.cosmology import get_cosmology, get_linear_power, get_growth_rate
-from drift.bias import DSSplitBin
-from drift.models import pqg_mu
-from drift.eft_bias import DSSplitBinEFT, GalaxyEFTParams
-from drift.eft_models import pqg_eft_mu, _pqg_ds_lin
-from drift.eft_terms import galaxy_counterterm, ds_counterterm, stochastic_term
-from drift.multipoles import compute_multipoles
+from drift.utils.cosmology import get_cosmology, get_linear_power, get_growth_rate
+from drift.theory.density_split.bias import DSSplitBin
+from drift.theory.density_split.power_spectrum import pqg_mu
+from drift.theory.density_split.bias import DSSplitBinEFT
+from drift.theory.galaxy.bias import GalaxyEFTParams
+from drift.theory.density_split.eft_power_spectrum import pqg_eft_mu, _pqg_ds_lin
+from drift.theory.density_split.counterterms import galaxy_counterterm, ds_counterterm, stochastic_term
+from drift.utils.multipoles import compute_multipoles
 
 
 @pytest.fixture(scope="module")
@@ -102,8 +103,8 @@ def test_galaxy_ct_scales_with_ds_amplitude(k, mu, plin):
 
 def test_galaxy_ct_opposite_sign_for_ds1_and_ds5(cosmo, k, mu, gal, plin):
     """DS1 (bq1 < 0) and DS5 (bq1 > 0) receive opposite-sign galaxy counterterms."""
-    from drift.kernels import gaussian_kernel
-    from drift.cosmology import get_growth_rate
+    from drift.utils.kernels import gaussian_kernel
+    from drift.utils.cosmology import get_growth_rate
     R = 10.0
     wk = gaussian_kernel(k, R)
     f = get_growth_rate(cosmo, 0.5)
@@ -127,7 +128,7 @@ def test_galaxy_ct_inherits_ds_angular_structure_rsd_selection(cosmo, k, mu, pli
     ds_lin for rsd_selection = bq1 * plin * wk * (1 + f*mu^2), so the galaxy CT
     must differ from baseline by the factor (1 + f*mu^2) at each (k, mu).
     """
-    from drift.kernels import gaussian_kernel
+    from drift.utils.kernels import gaussian_kernel
     R = 10.0
     wk = gaussian_kernel(k, R)
     f = get_growth_rate(cosmo, 0.5)
@@ -152,12 +153,12 @@ def test_galaxy_ct_perturbative_at_low_k(cosmo, k, mu, ds_eft, gal, plin):
     A well-behaved EFT counterterm scales as k^2 and is negligible compared
     to the tree-level cross-spectrum at k < 0.05 h/Mpc.
     """
-    from drift.kernels import gaussian_kernel
+    from drift.utils.kernels import gaussian_kernel
     R = 10.0
     wk = gaussian_kernel(k, R)
 
     gal_ct = GalaxyEFTParams(b1=gal.b1, c0=5.0)   # deliberately large c0
-    from drift.eft_models import _pqg_tree_eft
+    from drift.theory.density_split.eft_power_spectrum import _pqg_tree_eft
     f = get_growth_rate(cosmo, 0.5)
     ds_lin = _pqg_ds_lin(k, mu, plin, wk, f, ds_eft, "baseline")
     ct = galaxy_counterterm(k, mu, gal_ct, ds_lin)
@@ -187,10 +188,10 @@ def test_ds_nabla2_counterterm_k2R2_scaling(cosmo, k, mu, plin, gal):
     ds_b = DSSplitBinEFT(label="B", bq1=1.0, bq_nabla2=2.0 * bq_nabla2)
 
     # tree_normed: bq1=1 tree model used as shape
-    from drift.cosmology import get_growth_rate
-    from drift.kernels import gaussian_kernel
-    from drift.eft_models import _pqg_tree_eft
-    from drift.eft_bias import GalaxyEFTParams as GP
+    from drift.utils.cosmology import get_growth_rate
+    from drift.utils.kernels import gaussian_kernel
+    from drift.theory.density_split.eft_power_spectrum import _pqg_tree_eft
+    from drift.theory.galaxy.bias import GalaxyEFTParams as GP
 
     f = get_growth_rate(cosmo, 0.5)
     wk = gaussian_kernel(k, R)
@@ -285,3 +286,11 @@ def test_ds_quadratic_zero_has_no_effect_in_tree_only(cosmo, k, mu, gal):
     pb = pqg_eft_mu(k, mu, z=0.5, cosmo=cosmo, ds_params=ds_b,
                     gal_params=gal, R=10.0, mode="tree")
     np.testing.assert_allclose(pa, pb, rtol=1e-12)
+
+
+def test_ds_quadratic_raises_in_one_loop(cosmo, k, mu, gal):
+    """one_loop must reject unimplemented bq2 and bqK2 contributions."""
+    ds = DSSplitBinEFT(label="A", bq1=0.5, bq2=1.0)
+    with pytest.raises(NotImplementedError, match="bq2 and bqK2"):
+        pqg_eft_mu(k, mu, z=0.5, cosmo=cosmo, ds_params=ds,
+                   gal_params=gal, R=10.0, mode="one_loop")

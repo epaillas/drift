@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from drift.cosmology import (
+from drift.utils.cosmology import (
     get_cosmology, _DEFAULT_PARAMS, ALL_COSMO_NAMES,
 )
 from drift.io import load_pgg_measurements, diagonal_covariance
@@ -267,9 +267,9 @@ def main():
         print(errors[ell])
 
     # Evaluate theory at best-fit using param names from the chains file
-    from drift.eft_bias import GalaxyEFTParams
-    from drift.galaxy_models import pgg_eft_mu
-    from drift.multipoles import compute_multipoles
+    from drift.theory.galaxy.bias import GalaxyEFTParams
+    from drift.theory.galaxy.power_spectrum import pgg_eft_mu
+    from drift.utils.multipoles import compute_multipoles
 
     vary_cosmo = len(cosmo_param_names) > 0
     eval_cosmo = get_cosmology(cosmo_for_bf) if vary_cosmo else cosmo

@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from drift.cosmology import (
+from drift.utils.cosmology import (
     get_cosmology,
     get_linear_power,
     get_growth_rate,

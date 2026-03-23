@@ -2,10 +2,10 @@
 
 import numpy as np
 import pytest
-from drift.bias import DSSplitBin
-from drift.models import pqm_mu, pqg_mu
-from drift.cosmology import get_cosmology
-from drift.multipoles import compute_multipoles
+from drift.theory.density_split.bias import DSSplitBin
+from drift.theory.density_split.power_spectrum import pqm_mu, pqg_mu
+from drift.utils.cosmology import get_cosmology
+from drift.utils.multipoles import compute_multipoles
 
 
 @pytest.fixture(scope="module")
@@ -125,9 +125,9 @@ def test_pheno_beta_bq_shape(cosmo):
 
     Numerically verify P0 and P2 via Gauss-Legendre integration.
     """
-    from drift.cosmology import get_growth_rate
-    from drift.kernels import gaussian_kernel
-    from drift.cosmology import get_linear_power
+    from drift.utils.cosmology import get_growth_rate
+    from drift.utils.kernels import gaussian_kernel
+    from drift.utils.cosmology import get_linear_power
 
     bq = 1.0
     b1 = 2.0
@@ -163,8 +163,8 @@ def test_pheno_beta_bq_shape(cosmo):
 
 def test_rsd_selection_multiplicative_formula(cosmo):
     """pqg_mu rsd_selection must equal bq_eff*(1+f*mu^2)*(b1+f*mu^2)*W_R*P_lin."""
-    from drift.cosmology import get_linear_power, get_growth_rate
-    from drift.kernels import gaussian_kernel
+    from drift.utils.cosmology import get_linear_power, get_growth_rate
+    from drift.utils.kernels import gaussian_kernel
 
     k = np.logspace(-2, -0.5, 20)
     mu = np.linspace(-1, 1, 15)

@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from drift.kernels import gaussian_kernel, tophat_kernel
+from drift.utils.kernels import gaussian_kernel, tophat_kernel
 
 
 def test_gaussian_at_zero():

@@ -2,9 +2,9 @@
 
 import numpy as np
 
-from .cosmology import get_linear_power, get_growth_rate
-from .eft_bias import GalaxyEFTParams
-from .one_loop import compute_P22, compute_P13, compute_bias_loops, compute_Pdt_Ptt
+from ...utils.cosmology import get_growth_rate, get_linear_power
+from ...utils.one_loop import compute_P13, compute_P22, compute_Pdt_Ptt, compute_bias_loops
+from .bias import GalaxyEFTParameters
 
 _VALID_MODES = ("tree", "eft_ct", "eft", "one_loop")
 
@@ -34,7 +34,7 @@ def _compute_loop_templates(k, plin_func):
     return {"p22": p22, "p13": p13, **bias, **vel}
 
 
-def pgg_mu(k, mu, z, cosmo, b1, space="redshift"):
+def galaxy_power_spectrum_mu(k, mu, z, cosmo, b1, space="redshift"):
     """Tree-level Kaiser galaxy auto-power spectrum P_gg(k, mu).
 
     In redshift space: P_gg = (b1 + f*mu^2)^2 * P_lin(k)
@@ -70,8 +70,9 @@ def pgg_mu(k, mu, z, cosmo, b1, space="redshift"):
     return plin[:, np.newaxis] * kaiser[np.newaxis, :] ** 2
 
 
-def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_ct",
-               ir_resum=False):
+def galaxy_eft_power_spectrum_mu(
+    k, mu, z, cosmo, gal_params, space="redshift", mode="eft_ct", ir_resum=False
+):
     """EFT galaxy auto-power spectrum P_gg(k, mu).
 
     Modes
@@ -137,13 +138,13 @@ def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_ct",
     f = get_growth_rate(cosmo, z)
 
     if mode == "tree":
-        return pgg_mu(k, mu, z, cosmo, b1, space=space)
+        return galaxy_power_spectrum_mu(k, mu, z, cosmo, b1, space=space)
 
     kaiser = b1 + f * mu ** 2   # (nmu,)
 
     # --- Tree-level: (b1 + f*mu^2)^2 * P_lin, with optional IR resummation ---
     if ir_resum:
-        from .ir_resummation import split_wiggle_nowiggle, compute_sigma_dd, ir_damping
+        from ...utils.ir_resummation import compute_sigma_dd, ir_damping, split_wiggle_nowiggle
 
         h = float(cosmo['h'])
         Om = float(cosmo['Omega_m'])
@@ -238,3 +239,8 @@ def pgg_eft_mu(k, mu, z, cosmo, gal_params, space="redshift", mode="eft_ct",
         ) ** 2
 
     return P
+
+
+pgg_mu = galaxy_power_spectrum_mu
+pgg_eft_mu = galaxy_eft_power_spectrum_mu
+GalaxyEFTParams = GalaxyEFTParameters

@@ -2,9 +2,8 @@
 
 import numpy as np
 
-from .cosmology import get_cosmology
-from .galaxy_emulator import GalaxyTemplateEmulator
-from .emulator import TemplateEmulator
+from .emulators import DensitySplitGalaxyPowerSpectrumEmulator, GalaxyPowerSpectrumEmulator
+from .utils.cosmology import get_cosmology
 
 
 def make_synthetic_pgg(
@@ -45,7 +44,7 @@ def make_synthetic_pgg(
     if cosmo is None:
         cosmo = get_cosmology()
 
-    emulator = GalaxyTemplateEmulator(cosmo, k, ells=ells, z=z, space=space, mode=mode)
+    emulator = GalaxyPowerSpectrumEmulator(cosmo, k, ells=ells, z=z, space=space, mode=mode)
     data_vector = emulator.predict(true_params)
 
     return data_vector, true_params
@@ -87,7 +86,7 @@ def make_synthetic_dsg(
     if cosmo is None:
         cosmo = get_cosmology()
 
-    emulator = TemplateEmulator(
+    emulator = DensitySplitGalaxyPowerSpectrumEmulator(
         cosmo, k, ells=ells, z=z, R=R,
         kernel=kernel, space=space,
         ds_model=ds_model, mode=mode,

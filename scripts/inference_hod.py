@@ -17,8 +17,8 @@ from scipy.stats import uniform as sp_uniform
 import pocomc
 from pocomc import Sampler, Prior
 
-from drift.cosmology import get_cosmology, LinearPowerGrid
-from drift.emulator import TemplateEmulator
+from drift.utils.cosmology import get_cosmology, LinearPowerGrid
+from drift.emulators.density_split import TemplateEmulator
 from drift.io import load_measurements, mock_covariance, taylor_cache_key
 from inference_dsg import (
     _build_params, _build_data_mask, _parse_kmax,

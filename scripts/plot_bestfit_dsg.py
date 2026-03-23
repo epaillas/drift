@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from drift.cosmology import get_cosmology
+from drift.utils.cosmology import get_cosmology
 from drift.io import load_measurements, diagonal_covariance
 from inference_dsg import _parse_kmax, _build_data_mask, make_direct_theory_model
 

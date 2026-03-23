@@ -16,8 +16,8 @@ from pocomc import Sampler, Prior
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from drift.cosmology import get_cosmology
-from drift.galaxy_emulator import GalaxyTemplateEmulator
+from drift.utils.cosmology import get_cosmology
+from drift.emulators.galaxy import GalaxyTemplateEmulator
 from drift.analytic_marginalization import MarginalizedLikelihood
 from drift.synthetic import make_synthetic_pgg
 from drift.io import diagonal_covariance

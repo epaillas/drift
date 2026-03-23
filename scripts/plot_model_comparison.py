@@ -25,12 +25,13 @@ import matplotlib.pyplot as plt
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from drift.cosmology import get_cosmology
-from drift.bias import DSSplitBin
-from drift.models import pqg_mu
-from drift.eft_bias import DSSplitBinEFT, GalaxyEFTParams
-from drift.eft_models import pqg_eft_mu
-from drift.multipoles import compute_multipoles
+from drift.utils.cosmology import get_cosmology
+from drift.theory.density_split.bias import DSSplitBin
+from drift.theory.density_split.power_spectrum import pqg_mu
+from drift.theory.density_split.bias import DSSplitBinEFT
+from drift.theory.galaxy.bias import GalaxyEFTParams
+from drift.theory.density_split.eft_power_spectrum import pqg_eft_mu
+from drift.utils.multipoles import compute_multipoles
 
 # ---------------------------------------------------------------------------
 # Configuration

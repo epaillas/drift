@@ -3,11 +3,11 @@
 import numpy as np
 import pytest
 
-from drift.cosmology import get_cosmology, get_linear_power, get_growth_rate
-from drift.eft_bias import GalaxyEFTParams
-from drift.galaxy_models import pgg_mu, pgg_eft_mu
-from drift.galaxy_emulator import GalaxyTemplateEmulator
-from drift.multipoles import compute_multipoles
+from drift.utils.cosmology import get_cosmology, get_linear_power, get_growth_rate
+from drift.theory.galaxy.bias import GalaxyEFTParams
+from drift.theory.galaxy.power_spectrum import pgg_mu, pgg_eft_mu
+from drift.emulators.galaxy import GalaxyTemplateEmulator
+from drift.utils.multipoles import compute_multipoles
 
 
 @pytest.fixture(scope="module")

@@ -1,4 +1,4 @@
-"""EFT configuration dataclass and YAML loader."""
+"""EFT configuration dataclass and YAML loader for density-split theory."""
 
 from __future__ import annotations
 
@@ -8,13 +8,14 @@ from typing import List, Optional
 
 import yaml
 
+from .bias import DensitySplitEFTParameters
 from .config import CosmoConfig
-from .eft_bias import DSSplitBinEFT, GalaxyEFTParams
+from ..galaxy.bias import GalaxyEFTParameters
 
 
 @dataclass
-class EFTConfig:
-    """Top-level EFT configuration."""
+class DensitySplitEFTConfig:
+    """Top-level EFT configuration for density-split theory."""
 
     cosmo: CosmoConfig = field(default_factory=CosmoConfig)
     z: float = 0.5
@@ -22,8 +23,8 @@ class EFTConfig:
     kernel: str = "gaussian"
     ds_model: str = "baseline"
     mode: str = "eft_ct"
-    split_bins: List[DSSplitBinEFT] = field(default_factory=list)
-    gal_params: Optional[GalaxyEFTParams] = None
+    split_bins: List[DensitySplitEFTParameters] = field(default_factory=list)
+    gal_params: Optional[GalaxyEFTParameters] = None
     loop_kwargs: dict = field(default_factory=lambda: {
         "q_min": 1e-4,
         "q_max": 10.0,
@@ -33,8 +34,8 @@ class EFTConfig:
     })
 
 
-def load_eft_config(path) -> EFTConfig:
-    """Load an EFTConfig from a YAML file.
+def load_density_split_eft_config(path) -> DensitySplitEFTConfig:
+    """Load a density-split EFT configuration from a YAML file.
 
     Parameters
     ----------
@@ -43,7 +44,7 @@ def load_eft_config(path) -> EFTConfig:
 
     Returns
     -------
-    EFTConfig
+    DensitySplitEFTConfig
     """
     path = Path(path)
     with path.open() as f:
@@ -63,7 +64,7 @@ def load_eft_config(path) -> EFTConfig:
     # Density-split EFT bins
     bins_raw = raw.get("split_bins", [])
     split_bins = [
-        DSSplitBinEFT(
+        DensitySplitEFTParameters(
             label=b["label"],
             bq1=float(b["bq1"]),
             bq2=float(b.get("bq2", 0.0)),
@@ -78,7 +79,7 @@ def load_eft_config(path) -> EFTConfig:
     gal_raw = raw.get("gal_params", None)
     gal_params = None
     if gal_raw is not None:
-        gal_params = GalaxyEFTParams(
+        gal_params = GalaxyEFTParameters(
             b1=float(gal_raw["b1"]),
             b2=float(gal_raw.get("b2", 0.0)),
             bs2=float(gal_raw.get("bs2", 0.0)),
@@ -100,7 +101,7 @@ def load_eft_config(path) -> EFTConfig:
         "n_q_13": int(lk_raw.get("n_q_13", 256)),
     }
 
-    return EFTConfig(
+    return DensitySplitEFTConfig(
         cosmo=cosmo,
         z=float(raw.get("z", 0.5)),
         R=float(raw.get("R", 10.0)),
@@ -111,3 +112,7 @@ def load_eft_config(path) -> EFTConfig:
         gal_params=gal_params,
         loop_kwargs=loop_kwargs,
     )
+
+
+EFTConfig = DensitySplitEFTConfig
+load_eft_config = load_density_split_eft_config

@@ -7,6 +7,7 @@ Cosmology is fixed to Planck 2018 by default; use --vary-cosmo to sample it.
 
 import argparse
 import sys
+import warnings
 import numpy as np
 from pathlib import Path
 
@@ -16,13 +17,13 @@ from scipy.stats import uniform as sp_uniform
 import pocomc
 from pocomc import Sampler, Prior
 
-from drift.cosmology import (
+from drift.utils.cosmology import (
     get_cosmology, LinearPowerGrid, OneLoopPowerGrid,
     get_linear_power, get_growth_rate,
     _DEFAULT_PARAMS, DEFAULT_COSMO_RANGES, ALL_COSMO_NAMES,
 )
-from drift.emulator import TemplateEmulator
-from drift.galaxy_models import _compute_loop_templates
+from drift.emulators.density_split import TemplateEmulator
+from drift.theory.galaxy.power_spectrum import _compute_loop_templates
 from drift.analytic_marginalization import MarginalizedLikelihood
 from drift.io import load_measurements, diagonal_covariance, taylor_cache_key
 from drift.synthetic import make_synthetic_dsg
@@ -47,6 +48,111 @@ ELLS      = (0, 2)
 QUANTILES = (1, 5)
 
 VARY_COSMO = False
+
+
+# ---------------------------------------------------------------------------
+# Synthetic validation helpers
+# ---------------------------------------------------------------------------
+def _default_bq1_values(n_q):
+    """Deterministic per-quantile DS biases for synthetic validation."""
+    if n_q == 1:
+        return [1.0]
+    return np.linspace(-1.5, 1.5, n_q).tolist()
+
+
+def _build_synthetic_truth(quantiles, ds_model, mode):
+    """Return a synthetic truth dict consistent with the active configuration."""
+    n_q = len(quantiles)
+    truth = {
+        "b1": 2.0,
+        "bq1": _default_bq1_values(n_q),
+    }
+
+    if ds_model == "phenomenological":
+        truth["beta_q"] = [0.5] * n_q
+
+    if mode != "tree":
+        truth["sigma_fog"] = 5.0
+
+    if mode in ("eft_ct", "eft", "one_loop"):
+        truth["c0"] = 5.0
+        truth["bq_nabla2"] = [0.1] * n_q
+
+    if mode in ("eft", "one_loop"):
+        truth["s0"] = 100.0
+
+    if mode == "one_loop":
+        truth.update({
+            "c2": 2.0,
+            "c4": 0.0,
+            "s2": 0.0,
+            "b2": 0.5,
+            "bs2": -0.5,
+            "b3nl": 0.1,
+        })
+
+    return truth
+
+
+def _validate_synthetic_truth(true_params, quantiles, ds_model, mode):
+    """Validate that synthetic truth matches the configured DSG inference shape."""
+    n_q = len(quantiles)
+
+    def _require_length(name):
+        arr = true_params.get(name)
+        if arr is None:
+            raise ValueError(f"Synthetic truth is missing required key '{name}'.")
+        if len(arr) != n_q:
+            raise ValueError(
+                f"Synthetic truth '{name}' has length {len(arr)} but expected {n_q} "
+                f"for QUANTILES={quantiles}."
+            )
+
+    _require_length("bq1")
+    if ds_model == "phenomenological":
+        _require_length("beta_q")
+    if mode in ("eft_ct", "eft", "one_loop"):
+        _require_length("bq_nabla2")
+
+
+def _build_truth_lookup(true_params, quantiles, ds_model, mode, cosmo_params=None):
+    """Map injected truth into the sampled and marginalized parameter names."""
+    truth = dict(true_params)
+    if cosmo_params is not None:
+        truth.update(cosmo_params)
+    for i, q in enumerate(quantiles):
+        truth[f"bq1_{q}"] = float(true_params["bq1"][i])
+        if ds_model == "phenomenological":
+            truth[f"beta_q_{q}"] = float(true_params["beta_q"][i])
+        if mode in ("eft_ct", "eft", "one_loop"):
+            truth[f"bq_nabla2_{q}"] = float(true_params["bq_nabla2"][i])
+    return truth
+
+
+def _build_truth_theta(param_names, truth_lookup, fixed_cosmo):
+    """Convert a truth lookup dict into a theta vector matching param_names."""
+    theta = []
+    for name in param_names:
+        if name in truth_lookup:
+            theta.append(float(truth_lookup[name]))
+        elif name in fixed_cosmo:
+            theta.append(float(fixed_cosmo[name]))
+        else:
+            raise KeyError(f"No truth value available for parameter '{name}'.")
+    return np.asarray(theta, dtype=float)
+
+
+def _synthetic_linear_truth(linear_param_names, truth_lookup, quantiles):
+    """Return injected linear parameters in marginalized template order."""
+    alpha = []
+    for name in linear_param_names:
+        if name.startswith("bq_nabla2_"):
+            alpha.append(float(truth_lookup[name]))
+        elif name == "bq_nabla2":
+            raise ValueError("Per-quantile bq_nabla2 must be expanded before lookup.")
+        else:
+            alpha.append(float(truth_lookup.get(name, 0.0)))
+    return np.asarray(alpha, dtype=float)
 
 
 # ---------------------------------------------------------------------------
@@ -411,9 +517,10 @@ def make_direct_theory_model(cosmo, k, ells, quantiles, ds_model, mode,
         free_cosmo_names = []
     if fixed_cosmo is None:
         fixed_cosmo = {}
-    from drift.eft_bias import DSSplitBinEFT, GalaxyEFTParams
-    from drift.eft_models import pqg_eft_mu
-    from drift.multipoles import compute_multipoles
+    from drift.theory.density_split.bias import DSSplitBinEFT
+    from drift.theory.galaxy.bias import GalaxyEFTParams
+    from drift.theory.density_split.eft_power_spectrum import pqg_eft_mu
+    from drift.utils.multipoles import compute_multipoles
 
     vary_cosmo = len(free_cosmo_names) > 0
     n_bq = len(quantiles)
@@ -607,23 +714,15 @@ def main():
     # 1. Load / generate data
     if args.synthetic:
         synthetic_mode = args.synthetic_mode or model_mode
-        n_q = len(QUANTILES)
-        if synthetic_mode == "tree":
-            TRUE_PARAMS = {"b1": 2.0, "bq1": [0.5, 1.0, -1.0, -0.5],
-                           "beta_q": [0.5]*n_q}
-        elif synthetic_mode in ("eft_ct",):
-            TRUE_PARAMS = {"b1": 2.0, "bq1": [0.5, 1.0, -1.0, -0.5],
-                           "sigma_fog": 5.0, "c0": 5.0,
-                           "beta_q": [0.5]*n_q, "bq_nabla2": [0.1]*n_q}
-        elif synthetic_mode == "eft":
-            TRUE_PARAMS = {"b1": 2.0, "bq1": [0.5, 1.0, -1.0, -0.5],
-                           "sigma_fog": 5.0, "c0": 5.0, "s0": 100.0,
-                           "beta_q": [0.5]*n_q, "bq_nabla2": [0.1]*n_q}
-        else:  # one_loop / one_loop_matter_only
-            TRUE_PARAMS = {"b1": 2.0, "bq1": [0.5, 1.0, -1.0, -0.5],
-                           "sigma_fog": 5.0, "c0": 5.0, "c2": 2.0, "c4": 0.0,
-                           "s0": 100.0, "s2": 0.0, "b2": 0.5, "bs2": -0.5, "b3nl": 0.1,
-                           "beta_q": [0.5]*n_q, "bq_nabla2": [0.1]*n_q}
+        if args.vary_cosmo and synthetic_mode == "tree":
+            warnings.warn(
+                "Synthetic DSG truth recovery with mode='tree' and free cosmology is "
+                "not expected to be identifiable. Use fixed cosmology for exact "
+                "recovery, or switch to a more informative benchmark.",
+                stacklevel=2,
+            )
+        TRUE_PARAMS = _build_synthetic_truth(QUANTILES, DS_MODEL, synthetic_mode)
+        _validate_synthetic_truth(TRUE_PARAMS, QUANTILES, DS_MODEL, synthetic_mode)
         k = np.linspace(0.01, 0.3, 30)
         cosmo = get_cosmology()
         print(f"Generating synthetic DS×g data vector (mode={synthetic_mode}) ...")
@@ -658,6 +757,14 @@ def main():
         print(f"    ell={ell}: kmax={kmax_val:.4g} h/Mpc  ({n_kept}/{len(k)} k-bins kept)")
     data_y_masked = data_y[mask]
     print(f"  Masked data vector length: {len(data_y_masked)}")
+    if args.synthetic:
+        truth_lookup = _build_truth_lookup(
+            TRUE_PARAMS,
+            QUANTILES,
+            DS_MODEL,
+            synthetic_mode,
+            cosmo_params={name: _DEFAULT_PARAMS[name] for name in ALL_COSMO_NAMES},
+        )
 
     # 2. Cosmology
     if not args.synthetic:
@@ -706,6 +813,7 @@ def main():
             taylor_order=args.taylor_order, taylor_step=args.taylor_step,
             fiducial=str(sorted(fiducial.items())),
             param_names=str(PARAM_NAMES),
+            linear_param_names=str(linear_param_names),
             analytic_marg=True,
         )
         cache_path = output_dir / f".taylor_cache_{cache_hash}.npz"
@@ -841,6 +949,36 @@ def main():
         else:
             print("  done.")
 
+    if args.synthetic:
+        truth_theta = _build_truth_theta(PARAM_NAMES, truth_lookup, fixed_cosmo)
+        if use_marg:
+            m_truth, T_truth = decomposed_fn_masked(truth_theta)
+            pred_truth = m_truth.copy()
+            if len(linear_param_names):
+                alpha_truth = _synthetic_linear_truth(
+                    linear_param_names, truth_lookup, QUANTILES,
+                )
+                pred_truth = pred_truth + T_truth @ alpha_truth
+        else:
+            pred_truth = theory_fn_masked(truth_theta)
+
+        if args.vary_cosmo and not args.no_emulator:
+            print("  Reprojecting synthetic data onto the cosmology-grid theory basis.")
+            data_y_masked = pred_truth.copy()
+
+        chi2_truth = np.dot(data_y_masked - pred_truth, data_y_masked - pred_truth)
+        if not np.allclose(pred_truth, data_y_masked, rtol=1e-10, atol=1e-8):
+            if use_marg:
+                raise RuntimeError(
+                    "Synthetic DSG self-check failed: decomposed theory does not "
+                    "reproduce the injected masked data vector."
+                )
+            raise RuntimeError(
+                "Synthetic DSG self-check failed: theory does not reproduce the "
+                "injected masked data vector."
+            )
+        print(f"  Synthetic self-check chi2: {chi2_truth:.3e}")
+
     cov, precision_matrix = diagonal_covariance(data_y_masked, rescale=args.cov_rescale)
 
     # 4. Log-likelihood
@@ -907,7 +1045,7 @@ def main():
         var  = np.average((samples[:, i] - mean) ** 2, weights=weights)
         std  = np.sqrt(var)
         if args.synthetic:
-            true_val = TRUE_PARAMS.get(name, 0.0)
+            true_val = truth_lookup.get(name, 0.0)
             print(f"  {name:>14}  {mean:>8.3f}  {std:>8.3f}  {true_val:>8.3f}")
         else:
             print(f"  {name:>14}  {mean:>8.3f}  {std:>8.3f}")
@@ -923,7 +1061,7 @@ def main():
             var  = np.average((linear_samples[:, j] - mean) ** 2, weights=weights)
             std  = np.sqrt(var)
             if args.synthetic:
-                true_val = TRUE_PARAMS.get(name, 0.0)
+                true_val = truth_lookup.get(name, 0.0)
                 print(f"  {name:>14}  {mean:>8.3f}  {std:>8.3f}  {true_val:>8.3f}")
             else:
                 print(f"  {name:>14}  {mean:>8.3f}  {std:>8.3f}")

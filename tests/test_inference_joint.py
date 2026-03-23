@@ -9,7 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from drift.analytic_marginalization import MarginalizedLikelihood
-from drift.cosmology import get_cosmology
+from drift.utils.cosmology import get_cosmology
 from drift.io import diagonal_covariance
 from drift.synthetic import make_synthetic_dsg, make_synthetic_pgg
 from scripts.inference_dsg import (

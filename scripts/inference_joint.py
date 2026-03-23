@@ -19,7 +19,7 @@ sys.path.insert(0, str(_REPO_ROOT))
 sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from drift.analytic_marginalization import MarginalizedLikelihood
-from drift.cosmology import (
+from drift.utils.cosmology import (
     ALL_COSMO_NAMES,
     DEFAULT_COSMO_RANGES,
     LinearPowerGrid,
@@ -27,7 +27,7 @@ from drift.cosmology import (
     _DEFAULT_PARAMS,
     get_cosmology,
 )
-from drift.galaxy_emulator import GalaxyTemplateEmulator
+from drift.emulators.galaxy import GalaxyTemplateEmulator
 from drift.io import diagonal_covariance, load_pgg_measurements, load_measurements, mock_covariance, taylor_cache_key
 from drift.synthetic import make_synthetic_dsg, make_synthetic_pgg
 from scripts.inference_dsg import (

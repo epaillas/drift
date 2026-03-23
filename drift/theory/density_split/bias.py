@@ -1,10 +1,10 @@
-"""Density-split bias parameters."""
+"""Density-split parameter containers."""
 
 from dataclasses import dataclass, field
 
 
 @dataclass
-class DSSplitBin:
+class DensitySplitBin:
     """Bias parameters for one density-split bin q_i.
 
     Attributes
@@ -22,6 +22,18 @@ class DSSplitBin:
     label: str
     bq: float
     cq: float = 0.0
+    beta_q: float = 0.0
+
+
+@dataclass
+class DensitySplitEFTParameters:
+    """EFT bias parameters for one density-split bin."""
+
+    label: str
+    bq1: float
+    bq2: float = 0.0
+    bqK2: float = 0.0
+    bq_nabla2: float = 0.0
     beta_q: float = 0.0
 
 
@@ -44,4 +56,8 @@ def default_split_bins(n: int = 5) -> list:
     import numpy as np
 
     bq_values = np.linspace(-1.5, 1.5, n)
-    return [DSSplitBin(label=f"DS{i+1}", bq=float(bq)) for i, bq in enumerate(bq_values)]
+    return [DensitySplitBin(label=f"DS{i+1}", bq=float(bq)) for i, bq in enumerate(bq_values)]
+
+
+DSSplitBin = DensitySplitBin
+DSSplitBinEFT = DensitySplitEFTParameters

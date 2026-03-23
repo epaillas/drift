@@ -18,13 +18,13 @@ from scipy.stats import uniform as sp_uniform
 import pocomc
 from pocomc import Sampler, Prior
 
-from drift.cosmology import (
+from drift.utils.cosmology import (
     get_cosmology, LinearPowerGrid, OneLoopPowerGrid,
     get_linear_power, get_growth_rate,
     _DEFAULT_PARAMS, DEFAULT_COSMO_RANGES, ALL_COSMO_NAMES,
 )
-from drift.galaxy_emulator import GalaxyTemplateEmulator
-from drift.galaxy_models import _compute_loop_templates
+from drift.emulators.galaxy import GalaxyTemplateEmulator
+from drift.theory.galaxy.power_spectrum import _compute_loop_templates
 from drift.analytic_marginalization import MarginalizedLikelihood
 from drift.io import (
     analytic_pgg_covariance,
@@ -373,9 +373,9 @@ def make_direct_theory_model(cosmo, k, ells, mode,
         free_cosmo_names = []
     if fixed_cosmo is None:
         fixed_cosmo = {}
-    from drift.eft_bias import GalaxyEFTParams
-    from drift.galaxy_models import pgg_eft_mu
-    from drift.multipoles import compute_multipoles
+    from drift.theory.galaxy.bias import GalaxyEFTParams
+    from drift.theory.galaxy.power_spectrum import pgg_eft_mu
+    from drift.utils.multipoles import compute_multipoles
 
     vary_cosmo = len(free_cosmo_names) > 0
 

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from scipy.special import legendre as scipy_legendre
 
-from drift.multipoles import legendre, project_multipole, compute_multipoles
+from drift.utils.multipoles import legendre, project_multipole, compute_multipoles
 
 
 # ---- legendre ----------------------------------------------------------------

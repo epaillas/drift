@@ -8,8 +8,9 @@ Gauss-Legendre quadrature over (nk × nmu) points.
 
 import numpy as np
 
-from .cosmology import get_linear_power, get_growth_rate
-from .kernels import gaussian_kernel, tophat_kernel
+from ..theory.galaxy import _compute_loop_templates
+from ..utils.cosmology import get_growth_rate, get_linear_power
+from ..utils.kernels import gaussian_kernel, tophat_kernel
 
 _VALID_MODES = ("tree", "eft_ct", "eft", "one_loop")
 _VALID_DS_MODELS = ("baseline", "rsd_selection", "phenomenological")
@@ -24,7 +25,7 @@ _M = {
 }
 
 
-class TemplateEmulator:
+class DensitySplitGalaxyPowerSpectrumEmulator:
     """Analytic template emulator for DS × galaxy EFT multipoles.
 
     Precomputes k-space templates at construction time (once per cosmology).
@@ -114,9 +115,8 @@ class TemplateEmulator:
         self._T_k2 = k ** 2                    # k^2 (stochastic shape)
 
         if self.mode in ("one_loop",):
-            from .galaxy_models import _compute_loop_templates
             def _plin_func(kk):
-                from .cosmology import get_linear_power as _glp
+                from ..utils.cosmology import get_linear_power as _glp
                 return _glp(cosmo, np.asarray(kk, dtype=float), self.z)
             loops = _compute_loop_templates(k, _plin_func)
             self._set_loop_templates(loops)
@@ -242,17 +242,22 @@ class TemplateEmulator:
                 cm6 = cm6 - beta_q * f * c4 * k2A
 
             # DS higher-derivative counterterm: bq_nabla2 * (kR)^2 * tree_normed
-            # tree_normed uses bq1=1 and beta_q=0 (ds_normed defaults).
-            # For baseline/phenomenological: tree_normed = A*(b1 + f*mu^2)
-            # For rsd_selection:             tree_normed = A*(b1 + f*(1+b1)*mu^2 + f^2*mu^4)
+            # tree_normed uses bq1=1 while preserving the selected DS angular model.
+            # baseline:        A * (b1 + f*mu^2)
+            # rsd_selection:   A * (1 + f*mu^2) * (b1 + f*mu^2)
+            # phenomenological:A * (1 + beta_q*f*mu^2) * (b1 + f*mu^2)
             if self.ds_model == "rsd_selection":
                 cm0 = cm0 + bq_nabla2 * b1 * k2R2A
                 cm2 = cm2 + bq_nabla2 * f * (1.0 + b1) * k2R2A
                 cm4 = cm4 + bq_nabla2 * f ** 2 * k2R2A
-            else:  # baseline and phenomenological share tree_normed shape
+            elif self.ds_model == "phenomenological":
+                cm0 = cm0 + bq_nabla2 * b1 * k2R2A
+                cm2 = cm2 + bq_nabla2 * f * (1.0 + beta_q * b1) * k2R2A
+                cm4 = cm4 + bq_nabla2 * beta_q * f ** 2 * k2R2A
+            else:  # baseline
                 cm0 = cm0 + bq_nabla2 * b1 * k2R2A
                 cm2 = cm2 + bq_nabla2 * f * k2R2A
-                # cm4 unchanged (tree_normed has no mu^4 term for these models)
+                # cm4 unchanged (tree_normed has no mu^4 term)
 
         # ---- One-loop contributions ----
         if self.mode in ("one_loop",):
@@ -286,7 +291,7 @@ class TemplateEmulator:
                 cm4 = cm4 + beta_q * f * Pgm_loop_l2
 
         # ---- FoG for cross-spectrum (one_loop/eft_full modes with sigma_fog) ----
-        if sigma_fog != 0.0 and self.mode != "tree":
+        if sigma_fog != 0.0 and self.mode == "one_loop":
             # -sigma_fog * k^2 * DS_factor(mu) * (b1*mu^2 + f*mu^4) * Plin*W_R
             # Expanding by DS_factor(mu) = bq1 + beta_q*f*mu^2:
             #   mu^2: bq1*b1
@@ -482,7 +487,7 @@ class TemplateEmulator:
         nk         = len(self.k)
         n_ell      = len(self.ells)
         n_tot      = n_q * n_ell * nk
-        n_lin      = n_shared + n_q  # per-quantile bq_nabla2
+        n_lin      = n_shared + (n_q if self.mode != "tree" else 0)  # per-quantile bq_nabla2
 
         # m: model with all linear params = 0
         zero_params = dict(params)
@@ -508,3 +513,6 @@ class TemplateEmulator:
                     T[row_start:row_end, col] = tpl["bq_nabla2"]
 
         return m, T
+
+
+TemplateEmulator = DensitySplitGalaxyPowerSpectrumEmulator

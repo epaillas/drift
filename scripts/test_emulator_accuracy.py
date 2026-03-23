@@ -17,11 +17,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 
-from drift.cosmology import (
+from drift.utils.cosmology import (
     get_cosmology, LinearPowerGrid, OneLoopPowerGrid,
     _DEFAULT_PARAMS, DEFAULT_COSMO_RANGES, ALL_COSMO_NAMES,
 )
-from drift.galaxy_emulator import GalaxyTemplateEmulator
+from drift.emulators.galaxy import GalaxyTemplateEmulator
 from inference_pgg import parse_fix_cosmo
 
 # ---------------------------------------------------------------------------

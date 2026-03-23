@@ -1,10 +1,12 @@
 """EFT density-split × galaxy power spectrum assembler."""
 
 import numpy as np
-from .cosmology import get_linear_power, get_growth_rate
-from .kernels import gaussian_kernel, tophat_kernel
-from .eft_bias import DSSplitBinEFT, GalaxyEFTParams
-from .eft_terms import galaxy_counterterm, ds_counterterm, stochastic_term
+from ...utils.cosmology import get_growth_rate, get_linear_power
+from ...utils.kernels import gaussian_kernel, tophat_kernel
+from ..galaxy.bias import GalaxyEFTParameters
+from ..galaxy.power_spectrum import _compute_loop_templates
+from .bias import DensitySplitEFTParameters
+from .counterterms import density_split_counterterm, galaxy_counterterm, stochastic_term
 
 _VALID_MODES = ("tree", "eft_ct", "eft", "one_loop")
 _VALID_DS_MODELS = ("baseline", "rsd_selection", "phenomenological")
@@ -19,14 +21,14 @@ def _get_kernel(kernel: str, k: np.ndarray, R: float) -> np.ndarray:
         raise ValueError(f"Unknown kernel '{kernel}'. Choose 'gaussian' or 'tophat'.")
 
 
-def _pqg_tree_eft(
+def _density_split_galaxy_tree_eft_power_spectrum_mu(
     k: np.ndarray,
     mu: np.ndarray,
     plin: np.ndarray,
     wk: np.ndarray,
     f: float,
-    ds_params: DSSplitBinEFT,
-    gal_params: GalaxyEFTParams,
+    ds_params: DensitySplitEFTParameters,
+    gal_params: GalaxyEFTParameters,
     ds_model: str,
 ) -> np.ndarray:
     """Tree-level DS x galaxy cross spectrum using EFT containers.
@@ -69,13 +71,13 @@ def _pqg_tree_eft(
         return (plin * wk)[:, np.newaxis] * ds_factor * gal_rsd[np.newaxis, :]
 
 
-def _pqg_ds_lin(
+def density_split_linear_matter_cross_spectrum_mu(
     k: np.ndarray,
     mu: np.ndarray,
     plin: np.ndarray,
     wk: np.ndarray,
     f: float,
-    ds_params: DSSplitBinEFT,
+    ds_params: DensitySplitEFTParameters,
     ds_model: str,
 ) -> np.ndarray:
     """DS × linear matter cross-spectrum at tree level (no galaxy bias factor).
@@ -106,15 +108,15 @@ def _pqg_ds_lin(
         return (plin * wk)[:, np.newaxis] * ds_angular[np.newaxis, :]
 
 
-def _pqg_one_loop_partial(
+def _density_split_galaxy_one_loop_partial_power_spectrum_mu(
     k: np.ndarray,
     mu: np.ndarray,
     plin: np.ndarray,
     p1loop_matter: np.ndarray,
     wk: np.ndarray,
     f: float,
-    ds_params: DSSplitBinEFT,
-    gal_params: GalaxyEFTParams,
+    ds_params: DensitySplitEFTParameters,
+    gal_params: GalaxyEFTParameters,
     ds_model: str,
 ) -> np.ndarray:
     """Partial one-loop correction: promotes bq1*b1 term from Plin to P_1loop.
@@ -180,13 +182,13 @@ def _pqg_one_loop_partial(
         return (delta_p * wk)[:, np.newaxis] * ds_factor[np.newaxis, :] * gal_rsd[np.newaxis, :]
 
 
-def pqg_eft_mu(
+def density_split_galaxy_eft_power_spectrum_mu(
     k: np.ndarray,
     mu: np.ndarray,
     z: float,
     cosmo,
-    ds_params: DSSplitBinEFT,
-    gal_params: GalaxyEFTParams,
+    ds_params: DensitySplitEFTParameters,
+    gal_params: GalaxyEFTParameters,
     R: float,
     kernel: str = "gaussian",
     space: str = "redshift",
@@ -242,10 +244,17 @@ def pqg_eft_mu(
     f = get_growth_rate(cosmo, z) if space == "redshift" else 0.0
 
     if mode == "tree":
-        return _pqg_tree_eft(k, mu, plin, wk, f, ds_params, gal_params, ds_model)
+        return _density_split_galaxy_tree_eft_power_spectrum_mu(
+            k, mu, plin, wk, f, ds_params, gal_params, ds_model
+        )
 
     if mode in ("one_loop",):
-        from .galaxy_models import _compute_loop_templates
+        if ds_params.bq2 != 0.0 or ds_params.bqK2 != 0.0:
+            raise NotImplementedError(
+                "bq2 and bqK2 one-loop cross-terms are not yet implemented. "
+                "Set bq2=bqK2=0 for mode='one_loop'."
+            )
+
         def _plin_func(kk):
             return get_linear_power(cosmo, np.asarray(kk, dtype=float), z)
         loops = _compute_loop_templates(k, _plin_func)
@@ -293,14 +302,18 @@ def pqg_eft_mu(
             )
 
         # Galaxy EFT counterterm: -k^2*(c0+c2*mu^2+c4*mu^4) * P_{DS×lin}
-        ds_lin = _pqg_ds_lin(k, mu, plin, wk, f, ds_params, ds_model)
+        ds_lin = density_split_linear_matter_cross_spectrum_mu(
+            k, mu, plin, wk, f, ds_params, ds_model
+        )
         P = P + galaxy_counterterm(k, mu, gal_params, ds_lin)
 
         # DS higher-derivative counterterm
-        ds_normed = DSSplitBinEFT(label=ds_params.label, bq1=1.0)
-        gal_normed = GalaxyEFTParams(b1=gal_params.b1)
-        tree_normed = _pqg_tree_eft(k, mu, plin, wk, f, ds_normed, gal_normed, ds_model)
-        P = P + ds_counterterm(k, mu, plin, ds_params, tree_normed, R)
+        ds_normed = DensitySplitEFTParameters(label=ds_params.label, bq1=1.0, beta_q=ds_params.beta_q)
+        gal_normed = GalaxyEFTParameters(b1=gal_params.b1)
+        tree_normed = _density_split_galaxy_tree_eft_power_spectrum_mu(
+            k, mu, plin, wk, f, ds_normed, gal_normed, ds_model
+        )
+        P = P + density_split_counterterm(k, mu, plin, ds_params, tree_normed, R)
 
         # FoG for cross-spectrum: -sigma_fog * k^2*mu^2 * DS_factor * (b1 + f*mu^2) * Plin*W_R
         sigma_fog = gal_params.sigma_fog
@@ -325,7 +338,7 @@ def pqg_eft_mu(
         return P
 
     # eft_lite or eft_full: tree + counterterms (no one-loop promotion yet)
-    # NOTE: _pqg_one_loop_partial() exists but is intentionally not called here.
+    # NOTE: _density_split_galaxy_one_loop_partial_power_spectrum_mu() exists but is intentionally not called here.
     # The raw SPT P13 produces |2P13/Plin| ~ 13-15 at k<0.05 (see
     # test_P13_not_over_normalized), which is not k²-suppressed and cannot be
     # renormalized by the k²*Plin EFT counterterm basis.  The loop-promotion
@@ -333,16 +346,30 @@ def pqg_eft_mu(
     # with A from the k→0 asymptotics) is validated.
 
     # Tree-level (normed at bq1=1 for DS counterterm shape)
-    ds_normed = DSSplitBinEFT(label=ds_params.label, bq1=1.0)
-    gal_normed = GalaxyEFTParams(b1=gal_params.b1)
-    tree_normed = _pqg_tree_eft(k, mu, plin, wk, f, ds_normed, gal_normed, ds_model)
+    ds_normed = DensitySplitEFTParameters(label=ds_params.label, bq1=1.0, beta_q=ds_params.beta_q)
+    gal_normed = GalaxyEFTParameters(b1=gal_params.b1)
+    tree_normed = _density_split_galaxy_tree_eft_power_spectrum_mu(
+        k, mu, plin, wk, f, ds_normed, gal_normed, ds_model
+    )
 
-    P = _pqg_tree_eft(k, mu, plin, wk, f, ds_params, gal_params, ds_model)
-    ds_lin = _pqg_ds_lin(k, mu, plin, wk, f, ds_params, ds_model)
+    P = _density_split_galaxy_tree_eft_power_spectrum_mu(
+        k, mu, plin, wk, f, ds_params, gal_params, ds_model
+    )
+    ds_lin = density_split_linear_matter_cross_spectrum_mu(
+        k, mu, plin, wk, f, ds_params, ds_model
+    )
     P = P + galaxy_counterterm(k, mu, gal_params, ds_lin)
-    P = P + ds_counterterm(k, mu, plin, ds_params, tree_normed, R)
+    P = P + density_split_counterterm(k, mu, plin, ds_params, tree_normed, R)
 
     if mode == "eft":
         P = P + stochastic_term(k, mu, gal_params)
 
     return P
+
+
+_pqg_tree_eft = _density_split_galaxy_tree_eft_power_spectrum_mu
+_pqg_ds_lin = density_split_linear_matter_cross_spectrum_mu
+_pqg_one_loop_partial = _density_split_galaxy_one_loop_partial_power_spectrum_mu
+pqg_eft_mu = density_split_galaxy_eft_power_spectrum_mu
+DSSplitBinEFT = DensitySplitEFTParameters
+GalaxyEFTParams = GalaxyEFTParameters

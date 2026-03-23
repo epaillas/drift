@@ -1,13 +1,12 @@
-"""EFT counterterms and stochastic contributions for DS x galaxy spectra."""
+"""EFT counterterms and stochastic contributions for density-split spectra."""
 
 import numpy as np
-from .eft_bias import DSSplitBinEFT, GalaxyEFTParams
 
 
 def galaxy_counterterm(
     k: np.ndarray,
     mu: np.ndarray,
-    gal_params: GalaxyEFTParams,
+    gal_params,
     ds_lin: np.ndarray,
 ) -> np.ndarray:
     """Galaxy EFT counterterm for DS × galaxy cross-spectrum.
@@ -38,11 +37,11 @@ def galaxy_counterterm(
     return -k2[:, np.newaxis] * ds_lin * ct_shape[np.newaxis, :]
 
 
-def ds_counterterm(
+def density_split_counterterm(
     k: np.ndarray,
     mu: np.ndarray,
     plin: np.ndarray,
-    ds_params: DSSplitBinEFT,
+    ds_params,
     tree_normed: np.ndarray,
     R: float,
 ) -> np.ndarray:
@@ -76,7 +75,7 @@ def ds_counterterm(
 def stochastic_term(
     k: np.ndarray,
     mu: np.ndarray,
-    gal_params: GalaxyEFTParams,
+    gal_params,
 ) -> np.ndarray:
     """Stochastic (shot-noise) contribution.
 
@@ -96,3 +95,6 @@ def stochastic_term(
     mu = np.asarray(mu, dtype=float)
     stoch_k = gal_params.s0 + gal_params.s2 * k**2   # (nk,)
     return stoch_k[:, np.newaxis] * np.ones((1, len(mu)))
+
+
+ds_counterterm = density_split_counterterm

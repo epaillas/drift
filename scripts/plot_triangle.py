@@ -17,7 +17,7 @@ matplotlib.use("Agg")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from drift.cosmology import _DEFAULT_PARAMS
+from drift.utils.cosmology import _DEFAULT_PARAMS
 from getdist import MCSamples, plots
 
 # Planck 2018 true cosmological parameters (AbacusSummit fiducial)

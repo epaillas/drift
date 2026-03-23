@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .multipoles import legendre
+from .utils.multipoles import legendre
 
 
 def _bin_widths_from_centers(k: np.ndarray) -> np.ndarray:

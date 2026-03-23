@@ -7,11 +7,12 @@ Gauss-Legendre projection of pqg_eft_mu to rtol=1e-10.
 import numpy as np
 import pytest
 
-from drift.cosmology import get_cosmology, get_linear_power, get_growth_rate
-from drift.eft_bias import DSSplitBinEFT, GalaxyEFTParams
-from drift.eft_models import pqg_eft_mu
-from drift.multipoles import compute_multipoles
-from drift.emulator import TemplateEmulator
+from drift.utils.cosmology import get_cosmology, get_linear_power, get_growth_rate
+from drift.theory.density_split.bias import DSSplitBinEFT
+from drift.theory.galaxy.bias import GalaxyEFTParams
+from drift.theory.density_split.eft_power_spectrum import pqg_eft_mu
+from drift.utils.multipoles import compute_multipoles
+from drift.emulators.density_split import TemplateEmulator
 
 Z = 0.5
 R = 10.0
@@ -249,3 +250,21 @@ def test_update_cosmology_matches_new_instance(k):
 
     np.testing.assert_allclose(pred_upd, pred_ref, rtol=1e-12,
         err_msg="update_cosmology result differs from fresh TemplateEmulator")
+
+
+def test_phenomenological_bq_nabla2_matches_reference(cosmo, k):
+    """Phenomenological DS counterterm must preserve beta_q angular structure."""
+    ds = DSSplitBinEFT(label="DS2", bq1=0.9, bq_nabla2=0.5, beta_q=0.7)
+    gal = GalaxyEFTParams(b1=2.0, c0=4.0)
+    ref = _reference_multipoles(cosmo, k, ds, gal, "phenomenological", "eft_ct")
+    got = _emulator_predict(cosmo, k, ds, gal, "phenomenological", "eft_ct")
+    np.testing.assert_allclose(got, ref, rtol=1e-10)
+
+
+def test_sigma_fog_ignored_outside_one_loop(cosmo, k):
+    """DS emulator and direct model should both ignore sigma_fog in eft_ct."""
+    ds = DSSplitBinEFT(label="DS3", bq1=0.7, beta_q=0.4)
+    gal = GalaxyEFTParams(b1=1.8, c0=2.0, sigma_fog=5.0)
+    ref = _reference_multipoles(cosmo, k, ds, gal, "phenomenological", "eft_ct")
+    got = _emulator_predict(cosmo, k, ds, gal, "phenomenological", "eft_ct")
+    np.testing.assert_allclose(got, ref, rtol=1e-10)

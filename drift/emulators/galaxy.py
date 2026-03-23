@@ -8,7 +8,8 @@ Gauss-Legendre quadrature over (nk × nmu) points.
 
 import numpy as np
 
-from .cosmology import get_linear_power, get_growth_rate
+from ..theory.galaxy import _compute_loop_templates
+from ..utils.cosmology import get_growth_rate, get_linear_power
 
 _VALID_MODES = ("tree", "eft_ct", "eft", "one_loop")
 _EMULATOR_UNSUPPORTED_MODES = ()
@@ -22,7 +23,7 @@ _M = {
 }
 
 
-class GalaxyTemplateEmulator:
+class GalaxyPowerSpectrumEmulator:
     """Analytic template emulator for galaxy auto-power P_gg multipoles.
 
     Precomputes k-space templates at construction time (once per cosmology).
@@ -83,7 +84,6 @@ class GalaxyTemplateEmulator:
         self._T_k2 = k ** 2             # k^2 (stochastic shape)
 
         if self.mode in ("one_loop",):
-            from .galaxy_models import _compute_loop_templates
             def plin_func(kk):
                 return get_linear_power(cosmo, np.asarray(kk, dtype=float), self.z)
             loops = _compute_loop_templates(k, plin_func)
@@ -384,3 +384,6 @@ class GalaxyTemplateEmulator:
                                      b2=b2, bs2=bs2, b3nl=b3nl,
                                      sigma_fog=sigma_fog))
         return np.concatenate(pieces)
+
+
+GalaxyTemplateEmulator = GalaxyPowerSpectrumEmulator

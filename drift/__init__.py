@@ -1,52 +1,68 @@
-from .bias import DSSplitBin, default_split_bins
-from .config import DriftConfig, CosmoConfig, load_config
-from .models import pqm_mu, pqg_mu
-from .multipoles import compute_multipoles, project_multipole, legendre
-from .eft_bias import DSSplitBinEFT, GalaxyEFTParams
-from .eft_models import pqg_eft_mu
-from .one_loop import compute_one_loop_matter, compute_P22, compute_P13
-from .eft_config import EFTConfig, load_eft_config
-from .galaxy_models import pgg_mu, pgg_eft_mu
-from .galaxy_emulator import GalaxyTemplateEmulator
-from .ir_resummation import (
-    eisenstein_hu_nowiggle,
-    split_wiggle_nowiggle,
-    compute_sigma_dd,
-    ir_damping,
-)
-from .taylor import TaylorEmulator
 from .analytic_marginalization import MarginalizedLikelihood
 from .covariance import analytic_pgg_covariance, correlation_matrix, plot_correlation_matrix
+from .emulators import DensitySplitGalaxyPowerSpectrumEmulator, GalaxyPowerSpectrumEmulator
+from .taylor import TaylorEmulator
+from .theory import (
+    DensitySplitBin,
+    DensitySplitEFTConfig,
+    DensitySplitEFTParameters,
+    DensitySplitTheoryConfig,
+    GalaxyEFTParameters,
+    density_split_galaxy_eft_power_spectrum_mu,
+    density_split_galaxy_power_spectrum_mu,
+    density_split_matter_power_spectrum_mu,
+    galaxy_eft_power_spectrum_mu,
+    galaxy_power_spectrum_mu,
+    load_density_split_eft_config,
+    load_density_split_theory_config,
+)
+from .utils import (
+    compute_P13,
+    compute_P22,
+    compute_multipoles,
+    compute_one_loop_matter,
+    compute_sigma_dd,
+    eisenstein_hu_nowiggle,
+    get_cosmology,
+    get_growth_rate,
+    get_linear_power,
+    ir_damping,
+    legendre,
+    project_multipole,
+    split_wiggle_nowiggle,
+)
 
 __all__ = [
-    "DSSplitBin",
-    "default_split_bins",
-    "DriftConfig",
-    "CosmoConfig",
-    "load_config",
-    "pqm_mu",
-    "pqg_mu",
-    "compute_multipoles",
-    "project_multipole",
-    "legendre",
-    "DSSplitBinEFT",
-    "GalaxyEFTParams",
-    "pqg_eft_mu",
-    "compute_one_loop_matter",
-    "compute_P22",
-    "compute_P13",
-    "EFTConfig",
-    "load_eft_config",
-    "pgg_mu",
-    "pgg_eft_mu",
-    "GalaxyTemplateEmulator",
-    "eisenstein_hu_nowiggle",
-    "split_wiggle_nowiggle",
-    "compute_sigma_dd",
-    "ir_damping",
-    "TaylorEmulator",
+    "DensitySplitBin",
+    "DensitySplitEFTConfig",
+    "DensitySplitEFTParameters",
+    "DensitySplitGalaxyPowerSpectrumEmulator",
+    "DensitySplitTheoryConfig",
+    "GalaxyEFTParameters",
+    "GalaxyPowerSpectrumEmulator",
     "MarginalizedLikelihood",
+    "TaylorEmulator",
     "analytic_pgg_covariance",
+    "compute_P13",
+    "compute_P22",
+    "compute_multipoles",
+    "compute_one_loop_matter",
+    "compute_sigma_dd",
     "correlation_matrix",
+    "density_split_galaxy_eft_power_spectrum_mu",
+    "density_split_galaxy_power_spectrum_mu",
+    "density_split_matter_power_spectrum_mu",
+    "eisenstein_hu_nowiggle",
+    "galaxy_eft_power_spectrum_mu",
+    "galaxy_power_spectrum_mu",
+    "get_cosmology",
+    "get_growth_rate",
+    "get_linear_power",
+    "ir_damping",
+    "legendre",
+    "load_density_split_eft_config",
+    "load_density_split_theory_config",
     "plot_correlation_matrix",
+    "project_multipole",
+    "split_wiggle_nowiggle",
 ]

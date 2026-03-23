@@ -20,8 +20,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from drift import load_config, compute_multipoles
-from drift.cosmology import get_cosmology
-from drift.models import pqm_mu
+from drift.utils.cosmology import get_cosmology
+from drift.theory.density_split.power_spectrum import pqm_mu
 from drift.io import save_predictions
 
 CONFIG_PATH = Path(__file__).parents[1] / "configs" / "example.yaml"
