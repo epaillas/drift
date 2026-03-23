@@ -9,7 +9,10 @@ import sys
 import numpy as np
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(_REPO_ROOT))
+sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from scipy.stats import uniform as sp_uniform
 import pocomc
@@ -23,7 +26,13 @@ from drift.cosmology import (
 from drift.galaxy_emulator import GalaxyTemplateEmulator
 from drift.galaxy_models import _compute_loop_templates
 from drift.analytic_marginalization import MarginalizedLikelihood
-from drift.io import load_pgg_measurements, mock_covariance, diagonal_covariance, taylor_cache_key
+from drift.io import (
+    analytic_pgg_covariance,
+    load_pgg_measurements,
+    mock_covariance,
+    diagonal_covariance,
+    taylor_cache_key,
+)
 from drift.synthetic import make_synthetic_pgg
 
 # Import shared utilities from inference_dsg
@@ -45,6 +54,57 @@ Z    = 0.5
 ELLS = (0, 2, 4)
 
 VARY_COSMO = False
+
+
+def _validate_analytic_covariance_inputs(args):
+    """Validate CLI arguments for the analytic covariance path."""
+    if args.box_volume is None:
+        raise ValueError("--analytic-cov requires --box-volume.")
+    has_nd = args.number_density is not None
+    has_sn = args.shot_noise is not None
+    if has_nd == has_sn:
+        raise ValueError(
+            "--analytic-cov requires exactly one of --number-density or --shot-noise."
+        )
+
+
+def _resolve_pgg_covariance(args, k, data_y_masked, mask, fiducial_poles=None):
+    """Return (cov, precision) for the selected P_gg covariance source."""
+    synthetic = getattr(args, "synthetic", False)
+    diag_cov = getattr(args, "diag_cov", False)
+    analytic_cov = getattr(args, "analytic_cov", False)
+    cov_rescale = getattr(args, "cov_rescale", 1.0)
+    rebin = getattr(args, "rebin", 13)
+
+    if synthetic and not analytic_cov:
+        return diagonal_covariance(data_y_masked, rescale=cov_rescale)
+    if diag_cov:
+        return diagonal_covariance(data_y_masked, rescale=cov_rescale)
+    if analytic_cov:
+        _validate_analytic_covariance_inputs(args)
+        poles = fiducial_poles if fiducial_poles is not None else data_y_masked
+        cov, precision = analytic_pgg_covariance(
+            k,
+            poles,
+            ELLS,
+            volume=getattr(args, "box_volume", None),
+            number_density=getattr(args, "number_density", None),
+            shot_noise=getattr(args, "shot_noise", None),
+            mask=mask,
+            rescale=cov_rescale,
+            terms=getattr(args, "analytic_cov_terms", "gaussian"),
+            cng_amplitude=getattr(args, "cng_amplitude", 0.0),
+            cng_coherence=getattr(args, "cng_coherence", 0.35),
+        )
+        print(f"Using analytic cubic-box covariance with shape {cov.shape}")
+        return cov, precision
+    print(f"Estimating covariance from mocks in {COV_DIR} ...")
+    cov, precision = mock_covariance(
+        COV_DIR, "pgg", ELLS, k_data=k, mask=mask,
+        rescale=cov_rescale, rebin=rebin,
+    )
+    print(f"  Covariance matrix shape: {cov.shape}")
+    return cov, precision
 
 
 # ---------------------------------------------------------------------------
@@ -437,11 +497,61 @@ def main():
         help="Use diagonal covariance instead of mock covariance.",
     )
     parser.add_argument(
+        "--analytic-cov",
+        action="store_true",
+        help="Use fixed fiducial analytic covariance for a cubic box.",
+    )
+    parser.add_argument(
+        "--analytic-cov-terms",
+        type=str,
+        default="gaussian",
+        metavar="TERMS",
+        help=(
+            "Analytic covariance terms to include. Supported values are "
+            "'gaussian' and 'gaussian+effective_cng'."
+        ),
+    )
+    parser.add_argument(
         "--cov-rescale",
         type=float,
         default=64.0,
         metavar="FACTOR",
         help="Divide the covariance matrix by this factor (default: 64).",
+    )
+    parser.add_argument(
+        "--box-volume",
+        type=float,
+        default=None,
+        metavar="V",
+        help="Box volume in (Mpc/h)^3 for analytic covariance.",
+    )
+    parser.add_argument(
+        "--number-density",
+        type=float,
+        default=None,
+        metavar="N",
+        help="Galaxy number density in (h/Mpc)^3 for analytic covariance.",
+    )
+    parser.add_argument(
+        "--shot-noise",
+        type=float,
+        default=None,
+        metavar="P0",
+        help="Constant shot-noise power in (Mpc/h)^3 for analytic covariance.",
+    )
+    parser.add_argument(
+        "--cng-amplitude",
+        type=float,
+        default=0.0,
+        metavar="A",
+        help="Amplitude of the effective connected non-Gaussian covariance term.",
+    )
+    parser.add_argument(
+        "--cng-coherence",
+        type=float,
+        default=0.35,
+        metavar="SIGMA",
+        help="Log-k coherence length of the effective connected covariance term.",
     )
     parser.add_argument(
         "--analytic-marg",
@@ -709,15 +819,10 @@ def main():
         else:
             print("  done.")
 
-    if args.diag_cov or args.synthetic:
-        cov, precision_matrix = diagonal_covariance(data_y_masked, rescale=args.cov_rescale)
-    else:
-        print(f"Estimating covariance from mocks in {COV_DIR} ...")
-        cov, precision_matrix = mock_covariance(
-            COV_DIR, "pgg", ELLS, k_data=k, mask=mask,
-            rescale=args.cov_rescale, rebin=args.rebin,
-        )
-        print(f"  Covariance matrix shape: {cov.shape}")
+    fiducial_poles = {ell: poles[ell] for ell in ELLS} if not args.synthetic else data_y
+    cov, precision_matrix = _resolve_pgg_covariance(
+        args, k, data_y_masked, mask, fiducial_poles=fiducial_poles,
+    )
 
     # 4. Log-likelihood
     if use_marg:

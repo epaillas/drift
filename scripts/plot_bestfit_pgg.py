@@ -21,10 +21,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from drift.cosmology import (
     get_cosmology, _DEFAULT_PARAMS, ALL_COSMO_NAMES,
 )
-from drift.io import load_pgg_measurements, mock_covariance, diagonal_covariance
+from drift.io import load_pgg_measurements, diagonal_covariance
 from drift.synthetic import make_synthetic_pgg
 from inference_pgg import (
     SPACE, MODEL_MODE, MEAS_PATH, COV_DIR, ELLS, Z, VARY_COSMO,
+    _resolve_pgg_covariance,
     parse_fix_cosmo,
 )
 
@@ -66,6 +67,58 @@ def main():
         default=64.0,
         metavar="FACTOR",
         help="Divide the covariance matrix by this factor (default: 64).",
+    )
+    parser.add_argument(
+        "--diag-cov",
+        action="store_true",
+        help="Use diagonal covariance for the plotted error bars.",
+    )
+    parser.add_argument(
+        "--analytic-cov",
+        action="store_true",
+        help="Use analytic cubic-box covariance for the plotted error bars.",
+    )
+    parser.add_argument(
+        "--analytic-cov-terms",
+        type=str,
+        default="gaussian",
+        metavar="TERMS",
+        help="Analytic covariance terms: 'gaussian' or 'gaussian+effective_cng'.",
+    )
+    parser.add_argument(
+        "--box-volume",
+        type=float,
+        default=None,
+        metavar="V",
+        help="Box volume in (Mpc/h)^3 for analytic covariance.",
+    )
+    parser.add_argument(
+        "--number-density",
+        type=float,
+        default=None,
+        metavar="N",
+        help="Galaxy number density in (h/Mpc)^3 for analytic covariance.",
+    )
+    parser.add_argument(
+        "--shot-noise",
+        type=float,
+        default=None,
+        metavar="P0",
+        help="Constant shot-noise power in (Mpc/h)^3 for analytic covariance.",
+    )
+    parser.add_argument(
+        "--cng-amplitude",
+        type=float,
+        default=0.0,
+        metavar="A",
+        help="Amplitude of the effective connected covariance term.",
+    )
+    parser.add_argument(
+        "--cng-coherence",
+        type=float,
+        default=0.35,
+        metavar="SIGMA",
+        help="Log-k coherence length of the effective connected covariance term.",
     )
     parser.add_argument(
         "--vary-cosmo",
@@ -197,15 +250,11 @@ def main():
 
     # Covariance for error bars
     mask = np.concatenate([k <= kmax_dict[ell] for ell in ELLS])
-    if args.synthetic:
-        data_y_masked = data_y[mask]
-        cov, _ = diagonal_covariance(data_y_masked, rescale=args.cov_rescale)
-    else:
-        print(f"Estimating covariance from mocks in {COV_DIR} ...")
-        cov, _ = mock_covariance(
-            COV_DIR, "pgg", ELLS, k_data=k, mask=mask,
-            rescale=args.cov_rescale, rebin=args.rebin,
-        )
+    data_y_masked = data_y[mask] if args.synthetic else np.concatenate([poles[ell] for ell in ELLS])[mask]
+    fiducial_poles = {ell: poles[ell] for ell in ELLS} if not args.synthetic else data_y
+    cov, _ = _resolve_pgg_covariance(
+        args, k, data_y_masked, mask, fiducial_poles=fiducial_poles,
+    )
 
     # Per-ell error bars from covariance diagonal
     errors = {}

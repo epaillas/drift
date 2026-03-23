@@ -5,6 +5,8 @@ from pathlib import Path
 
 import numpy as np
 
+from .covariance import analytic_pgg_covariance as _analytic_pgg_covariance
+
 
 def save_predictions(path, k: np.ndarray, multipoles_per_bin: dict) -> None:
     """Save multipole predictions to a compressed .npz file.
@@ -187,6 +189,26 @@ def diagonal_covariance(data_y, noise_frac=0.05, floor=50.0, rescale=1.0):
     cov = np.diag(var) / rescale
     precision = np.diag(1.0 / (var / rescale))
     return cov, precision
+
+
+def analytic_pgg_covariance(k_data, poles, ells, volume,
+                            number_density=None, shot_noise=None,
+                            mask=None, rescale=1.0, terms="gaussian",
+                            cng_amplitude=0.0, cng_coherence=0.35):
+    """Fixed fiducial analytic covariance for galaxy power-spectrum multipoles."""
+    return _analytic_pgg_covariance(
+        k_data,
+        poles,
+        ells=ells,
+        volume=volume,
+        number_density=number_density,
+        shot_noise=shot_noise,
+        mask=mask,
+        rescale=rescale,
+        terms=terms,
+        cng_amplitude=cng_amplitude,
+        cng_coherence=cng_coherence,
+    )
 
 
 def taylor_cache_key(**kwargs):

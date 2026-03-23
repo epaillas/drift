@@ -16,6 +16,7 @@ from .ir_resummation import (
 )
 from .taylor import TaylorEmulator
 from .analytic_marginalization import MarginalizedLikelihood
+from .covariance import analytic_pgg_covariance, correlation_matrix, plot_correlation_matrix
 
 __all__ = [
     "DSSplitBin",
@@ -45,4 +46,7 @@ __all__ = [
     "ir_damping",
     "TaylorEmulator",
     "MarginalizedLikelihood",
+    "analytic_pgg_covariance",
+    "correlation_matrix",
+    "plot_correlation_matrix",
 ]
