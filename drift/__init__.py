@@ -1,5 +1,11 @@
 from .analytic_marginalization import MarginalizedLikelihood
-from .covariance import analytic_pgg_covariance, correlation_matrix, plot_correlation_matrix
+from .covariance import (
+    analytic_pgg_covariance,
+    analytic_pqg_covariance,
+    analytic_pqq_covariance,
+    correlation_matrix,
+    plot_correlation_matrix,
+)
 from .emulators import DensitySplitGalaxyPowerSpectrumEmulator, GalaxyPowerSpectrumEmulator
 from .taylor import TaylorEmulator
 from .theory import (
@@ -50,6 +56,8 @@ __all__ = [
     "MarginalizedLikelihood",
     "TaylorEmulator",
     "analytic_pgg_covariance",
+    "analytic_pqg_covariance",
+    "analytic_pqq_covariance",
     "compute_P13",
     "compute_P22",
     "compute_multipoles",

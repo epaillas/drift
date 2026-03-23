@@ -10,6 +10,7 @@ import sys
 import warnings
 import numpy as np
 from pathlib import Path
+import itertools
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -25,8 +26,12 @@ from drift.utils.cosmology import (
 from drift.emulators.density_split import TemplateEmulator
 from drift.theory.galaxy.power_spectrum import _compute_loop_templates
 from drift.analytic_marginalization import MarginalizedLikelihood
-from drift.io import load_measurements, diagonal_covariance, taylor_cache_key
+from drift.io import analytic_pqg_covariance, load_measurements, diagonal_covariance, taylor_cache_key
 from drift.synthetic import make_synthetic_dsg
+from drift.theory.density_split.config import load_config
+from drift.theory.density_split.power_spectrum import pqq_mu, pqg_mu
+from drift.theory.galaxy.power_spectrum import galaxy_pkmu
+from drift.utils.multipoles import compute_multipoles
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -37,6 +42,7 @@ MODEL_MODE = "tree"         # "tree" | "eft_ct" | "eft" | "one_loop"
 
 _suffix   = "_real" if SPACE == "real" else ""
 MEAS_PATH = Path(__file__).parents[1] / "outputs" / f"dsg_measured{_suffix}.hdf5"
+CONFIG_PATH = Path(__file__).parents[1] / "configs" / "example.yaml"
 OUTPUT_DIR = (
     Path(__file__).parents[1] / "outputs" / "inference_dsg" / SPACE / DS_MODEL / MODEL_MODE
 )
@@ -219,6 +225,161 @@ def _build_data_mask(k, ells, quantiles, kmax_dict, kmin=0.0):
             kmax = kmax_dict.get(ell, np.inf)
             segments.append((k >= kmin) & (k <= kmax))
     return np.concatenate(segments)
+
+
+def _validate_analytic_covariance_inputs(args):
+    """Validate CLI arguments for the analytic DSG covariance path."""
+    if args.box_volume is None:
+        raise ValueError("--analytic-cov requires --box-volume.")
+    has_nd = args.galaxy_number_density is not None
+    has_sn = args.galaxy_shot_noise is not None
+    if has_nd == has_sn:
+        raise ValueError(
+            "--analytic-cov requires exactly one of "
+            "--galaxy-number-density or --galaxy-shot-noise."
+        )
+
+
+def _quantile_labels(quantiles):
+    """Return ordered DS labels for the selected quantiles."""
+    return tuple(f"DS{q}" for q in quantiles)
+
+
+def _default_ds_pair_shot_noise(labels, auto_shot, cross_shot):
+    """Return a canonical DS-pair shot-noise dict over the selected labels."""
+    shot = {}
+    for label_a, label_b in itertools.combinations_with_replacement(labels, 2):
+        shot[(label_a, label_b)] = auto_shot if label_a == label_b else cross_shot
+    return shot
+
+
+def _default_ds_cross_shot_noise(labels, cross_shot):
+    """Return a constant DS×g shot-noise dict over the selected labels."""
+    return {label: float(cross_shot) for label in labels}
+
+
+def _build_analytic_dsg_fiducials(args, k, quantiles):
+    """Build fixed fiducial P_qg, P_qq, and P_gg multipoles for DSG covariance."""
+    cfg = load_config(getattr(args, "cov_config", CONFIG_PATH))
+    if cfg.tracer_bias is None:
+        raise ValueError(
+            "Analytic DSG covariance requires tracer_bias in the covariance config."
+        )
+
+    cosmo = get_cosmology({
+        "h": cfg.cosmo.h,
+        "Omega_m": cfg.cosmo.Omega_m,
+        "Omega_b": cfg.cosmo.Omega_b,
+        "sigma8": cfg.cosmo.sigma8,
+        "n_s": cfg.cosmo.n_s,
+        "engine": cfg.cosmo.engine,
+    })
+    bins_by_label = {ds_bin.label: ds_bin for ds_bin in cfg.split_bins}
+    labels = _quantile_labels(quantiles)
+    missing = [label for label in labels if label not in bins_by_label]
+    if missing:
+        raise ValueError(f"Covariance config is missing split bins {missing}.")
+
+    pqg_poles = {}
+    for label in labels:
+        ds_bin = bins_by_label[label]
+
+        def qg_model(kk, mu, _bin=ds_bin):
+            return pqg_mu(
+                kk,
+                mu,
+                cfg.z,
+                cosmo,
+                _bin,
+                cfg.tracer_bias,
+                cfg.R,
+                kernel=cfg.kernel,
+                space=SPACE,
+                ds_model=DS_MODEL,
+            )
+
+        pqg_poles[label] = compute_multipoles(k, qg_model, ells=ELLS)
+
+    pqq_poles = {}
+    for label_a, label_b in itertools.combinations_with_replacement(labels, 2):
+        ds_a = bins_by_label[label_a]
+        ds_b = bins_by_label[label_b]
+
+        def qq_model(kk, mu, _a=ds_a, _b=ds_b):
+            return pqq_mu(
+                kk,
+                mu,
+                cfg.z,
+                cosmo,
+                _a,
+                _b,
+                cfg.R,
+                kernel=cfg.kernel,
+                space=SPACE,
+                ds_model=DS_MODEL,
+            )
+
+        pqq_poles[(label_a, label_b)] = compute_multipoles(k, qq_model, ells=ELLS)
+
+    def gg_model(kk, mu):
+        return galaxy_pkmu(kk, mu, cfg.z, cosmo, cfg.tracer_bias, space=SPACE)
+
+    pgg_poles = compute_multipoles(k, gg_model, ells=ELLS)
+    return {
+        "pqg_poles": pqg_poles,
+        "pqq_poles": pqq_poles,
+        "pgg_poles": pgg_poles,
+        "labels": labels,
+    }
+
+
+def _resolve_dsg_covariance(args, k, data_y_masked, mask, quantiles, fiducial_blocks=None):
+    """Return (cov, precision) for the selected DSG covariance source."""
+    synthetic = getattr(args, "synthetic", False)
+    diag_cov = getattr(args, "diag_cov", False)
+    analytic_cov = getattr(args, "analytic_cov", False)
+    cov_rescale = getattr(args, "cov_rescale", 1.0)
+
+    if synthetic and not analytic_cov:
+        return diagonal_covariance(data_y_masked, rescale=cov_rescale)
+    if diag_cov:
+        return diagonal_covariance(data_y_masked, rescale=cov_rescale)
+    if not analytic_cov:
+        return diagonal_covariance(data_y_masked, rescale=cov_rescale)
+
+    _validate_analytic_covariance_inputs(args)
+    fiducials = fiducial_blocks if fiducial_blocks is not None else _build_analytic_dsg_fiducials(
+        args, k, quantiles
+    )
+    galaxy_shot_noise = (
+        1.0 / float(args.galaxy_number_density)
+        if getattr(args, "galaxy_number_density", None) is not None
+        else float(args.galaxy_shot_noise)
+    )
+    cov, precision = analytic_pqg_covariance(
+        k,
+        fiducials["pqg_poles"],
+        fiducials["pqq_poles"],
+        fiducials["pgg_poles"],
+        ELLS,
+        volume=getattr(args, "box_volume", None),
+        ds_labels=fiducials["labels"],
+        galaxy_shot_noise=galaxy_shot_noise,
+        ds_pair_shot_noise=_default_ds_pair_shot_noise(
+            fiducials["labels"],
+            getattr(args, "ds_pair_auto_shot_noise", 250.0),
+            getattr(args, "ds_pair_cross_shot_noise", 40.0),
+        ),
+        ds_cross_shot_noise=_default_ds_cross_shot_noise(
+            fiducials["labels"],
+            getattr(args, "ds_cross_shot_noise", 0.0),
+        ),
+        mask=mask,
+        rescale=cov_rescale,
+        terms=getattr(args, "analytic_cov_terms", "gaussian"),
+    )
+    print(f"Using analytic cubic-box DSG covariance with shape {cov.shape}")
+    return cov, precision
 
 
 # ---------------------------------------------------------------------------
@@ -659,10 +820,74 @@ def main():
         help="Use diagonal covariance (always used for synthetic data).",
     )
     parser.add_argument(
+        "--analytic-cov",
+        action="store_true",
+        help="Use fixed fiducial analytic cubic-box covariance for DSG.",
+    )
+    parser.add_argument(
+        "--analytic-cov-terms",
+        type=str,
+        default="gaussian",
+        metavar="TERMS",
+        help=(
+            "Analytic covariance terms to include. Only 'gaussian' is implemented "
+            "for DSG; beyond-Gaussian options are placeholders."
+        ),
+    )
+    parser.add_argument(
         "--cov-rescale",
         type=float,
         default=64.0,
         metavar="FACTOR",
+    )
+    parser.add_argument(
+        "--box-volume",
+        type=float,
+        default=None,
+        metavar="V",
+        help="Box volume in (Mpc/h)^3 for analytic DSG covariance.",
+    )
+    parser.add_argument(
+        "--galaxy-number-density",
+        type=float,
+        default=None,
+        metavar="N",
+        help="Galaxy number density in (h/Mpc)^3 for analytic DSG covariance.",
+    )
+    parser.add_argument(
+        "--galaxy-shot-noise",
+        type=float,
+        default=None,
+        metavar="P0",
+        help="Constant galaxy shot-noise power in (Mpc/h)^3 for analytic DSG covariance.",
+    )
+    parser.add_argument(
+        "--ds-pair-auto-shot-noise",
+        type=float,
+        default=250.0,
+        metavar="PQQ0",
+        help="Constant DS auto-pair shot-noise power used in analytic DSG covariance.",
+    )
+    parser.add_argument(
+        "--ds-pair-cross-shot-noise",
+        type=float,
+        default=40.0,
+        metavar="PQQX",
+        help="Constant DS cross-pair shot-noise power used in analytic DSG covariance.",
+    )
+    parser.add_argument(
+        "--ds-cross-shot-noise",
+        type=float,
+        default=0.0,
+        metavar="PQG0",
+        help="Constant DS×g cross shot-noise power applied to each quantile.",
+    )
+    parser.add_argument(
+        "--cov-config",
+        type=Path,
+        default=CONFIG_PATH,
+        metavar="PATH",
+        help="Density-split config used to build fixed fiducial analytic covariance inputs.",
     )
     parser.add_argument(
         "--analytic-marg",
@@ -677,6 +902,8 @@ def main():
         help="Override prior sigmas for analytic marginalization.",
     )
     args = parser.parse_args()
+    if args.diag_cov and args.analytic_cov:
+        raise ValueError("Choose at most one of --diag-cov and --analytic-cov.")
 
     model_mode = args.mode
 
@@ -979,7 +1206,13 @@ def main():
             )
         print(f"  Synthetic self-check chi2: {chi2_truth:.3e}")
 
-    cov, precision_matrix = diagonal_covariance(data_y_masked, rescale=args.cov_rescale)
+    cov, precision_matrix = _resolve_dsg_covariance(
+        args,
+        k,
+        data_y_masked,
+        mask,
+        QUANTILES,
+    )
 
     # 4. Log-likelihood
     if use_marg:

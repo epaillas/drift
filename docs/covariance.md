@@ -1,244 +1,233 @@
-# Analytic Covariance for Galaxy Power-Spectrum Multipoles
+# Analytic Covariance for Power-Spectrum Multipoles
 
-This document describes the analytic covariance currently implemented in `drift` for the galaxy auto-power spectrum multipoles,
+This document describes the analytic covariance currently implemented in `drift` for three observable families:
 
-$$P_{gg,\ell}(k), \qquad \ell \in \{0, 2, 4\}.$$
+- galaxy auto-power spectrum multipoles, $P_{gg,\ell}(k)$
+- density-split pair multipoles, $P_{q_i q_j,\ell}(k)$
+- density-split-galaxy cross-spectrum multipoles, $P_{q_i g,\ell}(k)$
 
-The implementation lives in [`drift/covariance.py`](/Users/epaillas/code/drift/drift/covariance.py) and is exposed through `analytic_pgg_covariance(...)`.
+The implementation lives in [`drift/covariance.py`](/Users/epaillas/code/drift/drift/covariance.py).
 
 The current code supports:
 
-- a disconnected Gaussian covariance for a cubic box
-- an optional phenomenological connected correction labeled `effective_cng`
+- a disconnected Gaussian covariance for a cubic box for `P_{gg}`, `P_{q_i q_j}`, and `P_{q_i g}`
+- an optional phenomenological connected correction labeled `effective_cng` for `P_{gg}` only
 
-It does **not** yet implement the full survey covariance beyond that approximation.
+For density-split observables, any beyond-Gaussian term request currently raises `NotImplementedError`. Those code paths are deliberate placeholders for future extensions.
 
 ---
 
-## Scope and Assumptions
+## Common Gaussian Setup
 
-The implemented analytic covariance assumes:
+All covariance paths assume:
 
 - a periodic cubic volume $V$
 - shell-averaged Fourier modes in $k$ bins
 - no survey window convolution or mask-induced mode mixing
-- a constant shot-noise contribution $P_\mathrm{shot} = 1/\bar{n}$, or an equivalent user-supplied constant `shot_noise`
-- fiducial galaxy multipoles supplied as either a dictionary $\{P_\ell(k)\}$ or a flat data vector
+- fiducial multipoles reconstructed into $P(k,\mu)$ via
 
-Under these assumptions, the Gaussian term is diagonal in the radial bin index $k_i$, but different multipoles at the same $k_i$ remain correlated.
+$$
+P(k,\mu) \approx \sum_{\ell \in \mathrm{ells}} P_\ell(k)\,\mathcal{L}_\ell(\mu)
+$$
+
+- mode counts
+
+$$
+N_i = \frac{V\,k_i^2\,\Delta k_i}{2\pi^2}
+$$
+
+with $\Delta k_i$ inferred from adjacent bin centers
+- numerical $\mu$ integration via Gauss-Legendre quadrature
+
+As in the usual Gaussian multipole treatment, the disconnected covariance is diagonal in the radial bin index $k_i$ but can correlate different multipoles at fixed $k_i$. This is the same box-level approximation commonly used as the starting point for anisotropic power-spectrum covariance models; see for example [Wadekar & Scoccimarro (2020)](https://arxiv.org/abs/1910.02914).
 
 ---
 
-## Gaussian Covariance Before Multipole Projection
+## Galaxy Multipoles $P_{gg,\ell}(k)$
 
-For a Gaussian density field in a cubic box, the disconnected covariance of the anisotropic power spectrum estimator is
+The galaxy covariance is exposed through `analytic_pgg_covariance(...)`.
+
+For a Gaussian field, the disconnected covariance of the anisotropic estimator is
 
 $$
-\mathrm{Cov}\left[P(k_i, \mu), P(k_j, \mu')\right]
-= \frac{1}{N_i}\,
+\mathrm{Cov}\!\left[P(k_i,\mu),P(k_j,\mu')\right]
+=
+\frac{\delta_{ij}\,\delta_{\mathrm D}(\mu-\mu')}{N_i}
+\left[P_\mathrm{tot}(k_i,\mu)\right]^2,
+$$
+
+with
+
+$$
+P_\mathrm{tot}(k,\mu)=P_{gg}(k,\mu)+P_\mathrm{shot}.
+$$
+
+Projecting both legs onto Legendre multipoles gives
+
+$$
+\mathrm{Cov}\!\left[P_\ell(k_i),P_{\ell'}(k_j)\right]
+=
 \delta_{ij}\,
-\delta_\mathrm{D}(\mu - \mu')\,
-\left[P(k_i, \mu) + P_\mathrm{shot}\right]^2,
-$$
-
-where $N_i$ is the number of Fourier modes in the shell centered on $k_i$.
-
-In the code, the shell mode count is approximated as
-
-$$
-N_i \equiv N_\mathrm{modes}(k_i)
-= \frac{V\, k_i^2\, \Delta k_i}{2\pi^2},
-$$
-
-with $\Delta k_i$ inferred from adjacent bin centers. This is implemented by `_bin_widths_from_centers(...)` and `_nmodes_cubic_box(...)`.
-
-The quantity entering the covariance is the total power,
-
-$$
-P_\mathrm{tot}(k, \mu) = P_{gg}(k, \mu) + P_\mathrm{shot}.
-$$
-
----
-
-## Multipole Projection
-
-The galaxy power-spectrum multipoles are defined by
-
-$$
-P_\ell(k) = \frac{2\ell + 1}{2}
+\frac{(2\ell+1)(2\ell'+1)}{N_i}
 \int_{-1}^{1} d\mu\,
-\mathcal{L}_\ell(\mu)\,
-P(k, \mu).
+\mathcal{L}_\ell(\mu)\mathcal{L}_{\ell'}(\mu)
+\left[P_\mathrm{tot}(k_i,\mu)\right]^2.
 $$
 
-Starting from the Gaussian covariance above and projecting both legs onto Legendre multipoles gives
+This is the structure implemented by `_gaussian_covariance(...)`.
+
+The `P_{gg}` path also supports `terms="gaussian+effective_cng"`, which adds the existing phenomenological connected correction on top of the Gaussian covariance.
+
+---
+
+## Density-Split Pair Multipoles $P_{q_i q_j,\ell}(k)$
+
+The density-split pair covariance is exposed through `analytic_pqq_covariance(...)`.
+
+Because `P_{q_i q_j}` is a cross-spectrum estimator in the general case, the disconnected Gaussian covariance uses the standard Wick-contracted cross-spectrum form. For DS pairs $(a,b)$ and $(c,d)$,
 
 $$
-\mathrm{Cov}\left[P_\ell(k_i), P_{\ell'}(k_j)\right]
-= \delta_{ij}\,
-\frac{(2\ell + 1)(2\ell' + 1)}{N_i}
+\mathrm{Cov}\!\left[P_{ab}(k_i,\mu),P_{cd}(k_j,\mu')\right]
+=
+\frac{\delta_{ij}\,\delta_{\mathrm D}(\mu-\mu')}{N_i}
+\left[
+P^{\mathrm{tot}}_{ac}(k_i,\mu)\,P^{\mathrm{tot}}_{bd}(k_i,\mu)
++
+P^{\mathrm{tot}}_{ad}(k_i,\mu)\,P^{\mathrm{tot}}_{bc}(k_i,\mu)
+\right].
+$$
+
+Each total pair spectrum is
+
+$$
+P^{\mathrm{tot}}_{ab}(k,\mu)=P_{ab}(k,\mu)+N_{ab},
+$$
+
+where $N_{ab}$ is a constant pairwise noise term supplied by the caller.
+
+Projecting both covariance legs onto multipoles yields
+
+$$
+\mathrm{Cov}\!\left[P_{ab,\ell}(k_i),P_{cd,\ell'}(k_j)\right]
+=
+\delta_{ij}\,
+\frac{(2\ell+1)(2\ell'+1)}{N_i}
 \int_{-1}^{1} d\mu\,
-\mathcal{L}_\ell(\mu)\,
-\mathcal{L}_{\ell'}(\mu)\,
-\left[P(k_i, \mu) + P_\mathrm{shot}\right]^2.
+\mathcal{L}_\ell(\mu)\mathcal{L}_{\ell'}(\mu)
+\left[
+P^{\mathrm{tot}}_{ac}P^{\mathrm{tot}}_{bd}
++
+P^{\mathrm{tot}}_{ad}P^{\mathrm{tot}}_{bc}
+\right].
 $$
 
-This is the exact structure implemented in `_gaussian_covariance(...)`, except that the $\mu$ integral is evaluated numerically with Gauss-Legendre quadrature:
+This is the structure implemented in `_gaussian_dspair_covariance(...)`.
+
+`pair_order` defines the observed DS-pair blocks in the returned covariance. The code canonicalizes pairs symmetrically, so `("DS2", "DS1")` is treated as `("DS1", "DS2")`. Because the Wick contractions require intermediate pairs such as $(a,c)$ and $(b,d)$, the fiducial `poles` and `shot_noise` dictionaries must provide all canonical DS pairs over the bins appearing in `pair_order`.
+
+The returned DS covariance uses pair-major ordering, then multipole-major ordering within each pair:
 
 $$
-\int_{-1}^{1} d\mu\, f(\mu)
-\;\rightarrow\;
-\sum_{a=1}^{N_\mu} w_a\, f(\mu_a),
+[P_{q_1 q_1,\ell_0}(k_1),\ldots,P_{q_1 q_1,\ell_0}(k_{n_k}),
+P_{q_1 q_1,\ell_1}(k_1),\ldots,
+P_{q_1 q_2,\ell_0}(k_1),\ldots].
 $$
-
-with `mu_points=256` by default.
-
-Because of the Kronecker factor $\delta_{ij}$, the Gaussian covariance is block-diagonal in $k$. However, for fixed $k_i$, the integral over
-
-$$
-\mathcal{L}_\ell(\mu)\mathcal{L}_{\ell'}(\mu)\left[P_\mathrm{tot}(k_i,\mu)\right]^2
-$$
-
-is generally non-zero when $\ell \neq \ell'$, so the multipoles remain correlated within each $k$ bin.
 
 ---
 
-## Reconstructing $P(k,\mu)$ From Fiducial Multipoles
+## Density-Split-Galaxy Multipoles $P_{q_i g,\ell}(k)$
 
-The current implementation takes fiducial multipoles and reconstructs the anisotropic power spectrum as
+The density-split-galaxy covariance is exposed through `analytic_pqg_covariance(...)`.
+
+For DS labels $a$ and $b$, the Gaussian disconnected covariance of the anisotropic cross-spectrum estimator follows the usual Wick contraction for two cross spectra with one common galaxy leg:
 
 $$
-P(k, \mu) \approx \sum_{\ell \in \mathrm{ells}} P_\ell(k)\, \mathcal{L}_\ell(\mu).
+\mathrm{Cov}\!\left[P_{ag}(k_i,\mu),P_{bg}(k_j,\mu')\right]
+=
+\frac{\delta_{ij}\,\delta_{\mathrm D}(\mu-\mu')}{N_i}
+\left[
+P^{\mathrm{tot}}_{ab}(k_i,\mu)\,P^{\mathrm{tot}}_{gg}(k_i,\mu)
++
+P^{\mathrm{tot}}_{ag}(k_i,\mu)\,P^{\mathrm{tot}}_{bg}(k_i,\mu)
+\right].
 $$
 
-In code:
+The total spectra entering the contractions are modeled as
 
-```python
-pkmu = np.zeros((len(k), len(mu)), dtype=float)
-for ell in ells:
-    pkmu += pole_dict[ell][:, None] * L[ell][None, :]
-total_power = pkmu + shot
-```
+$$
+P^{\mathrm{tot}}_{gg}(k,\mu)=P_{gg}(k,\mu)+N_{gg},
+$$
 
-This means the covariance model is only as complete as the supplied multipole set. If only `(0, 2)` are passed, then the reconstruction omits any fiducial $\ell=4$ or higher contribution to $P(k,\mu)$.
+$$
+P^{\mathrm{tot}}_{ab}(k,\mu)=P_{q_a q_b}(k,\mu)+N_{ab},
+$$
+
+$$
+P^{\mathrm{tot}}_{ag}(k,\mu)=P_{q_a g}(k,\mu)+N_{ag}.
+$$
+
+Here:
+
+- $N_{gg}$ is a constant galaxy shot-noise term
+- $N_{ab}$ is a constant DS-pair noise term, provided for every canonical pair needed by the selected quantiles
+- $N_{ag}$ is an optional constant DS×g cross-noise term, provided per DS label and defaulting naturally to zero if the caller chooses that model
+
+Projecting both covariance legs onto multipoles gives
+
+$$
+\mathrm{Cov}\!\left[P_{ag,\ell}(k_i),P_{bg,\ell'}(k_j)\right]
+=
+\delta_{ij}\,
+\frac{(2\ell+1)(2\ell'+1)}{N_i}
+\int_{-1}^{1} d\mu\,
+\mathcal{L}_\ell(\mu)\mathcal{L}_{\ell'}(\mu)
+\left[
+P^{\mathrm{tot}}_{ab}P^{\mathrm{tot}}_{gg}
++
+P^{\mathrm{tot}}_{ag}P^{\mathrm{tot}}_{bg}
+\right].
+$$
+
+This is the structure implemented in `_gaussian_dsg_covariance(...)`.
+
+The returned DSG covariance uses label-major ordering, then multipole-major ordering within each label:
+
+$$
+[P_{q_1 g,\ell_0}(k_1),\ldots,P_{q_1 g,\ell_0}(k_{n_k}),
+P_{q_1 g,\ell_1}(k_1),\ldots,
+P_{q_2 g,\ell_0}(k_1),\ldots].
+$$
+
+This `P_{qg}` block structure is the natural Gaussian companion to the density-split clustering measurements used in recent analyses such as [Paillas et al. (2023)](https://doi.org/10.1093/mnras/stad1017).
 
 ---
 
-## Matrix Structure Used in `drift`
+## Beyond-Gaussian Placeholders
 
-For `n_k` radial bins and `n_\ell` multipoles, the covariance is stored as a dense matrix of shape
+For density-split observables, the only implemented term is:
 
-$$
-(n_\ell n_k) \times (n_\ell n_k),
-$$
+- `"gaussian"`
 
-with blocks ordered by multipole:
+If `terms` includes `effective_cng` or any other non-Gaussian alias:
 
-$$
-[P_{\ell_0}(k_1), \ldots, P_{\ell_0}(k_{n_k}),
-P_{\ell_1}(k_1), \ldots, P_{\ell_1}(k_{n_k}), \ldots ].
-$$
+- `analytic_pqq_covariance(...)` raises `NotImplementedError`
+- `analytic_pqg_covariance(...)` raises `NotImplementedError`
 
-Each $(\ell,\ell')$ block is diagonal in $k$ for the Gaussian term:
+This is an intentional placeholder for future work on:
 
-$$
-\mathbf{C}_{\ell\ell'}^\mathrm{G}
-= \mathrm{diag}\left(C_{\ell\ell'}^\mathrm{G}(k_1), \ldots, C_{\ell\ell'}^\mathrm{G}(k_{n_k})\right).
-$$
+- connected DS trispectrum terms
+- connected DS×g trispectrum terms
+- super-sample covariance
+- survey-window mixing
+- joint covariance blocks involving `P_{gg}`, `P_{q_i q_j}`, and `P_{q_i g}`
 
-This structure is tested explicitly in [`tests/test_covariance.py`](/Users/epaillas/code/drift/tests/test_covariance.py).
+For context on where a beyond-Gaussian multipole treatment would need to go next, see for example [Kobayashi et al. (2023)](https://arxiv.org/abs/2308.08593).
 
 ---
 
-## Shot Noise, Masking, and Rescaling
+## Current APIs
 
-The analytic interface accepts either:
-
-- `number_density`, interpreted as $P_\mathrm{shot} = 1/\bar{n}$
-- `shot_noise`, interpreted directly as a constant additive power
-
-Exactly one must be supplied.
-
-Two additional implementation details matter:
-
-- `mask`: after constructing the full covariance, the code applies a Boolean mask to the flattened data vector and returns the masked covariance and precision matrix
-- `rescale`: the covariance is divided by this factor, so
-
-$$
-\mathbf{C} \rightarrow \mathbf{C} / r
-$$
-
-for `rescale = r`
-
-These behaviors are also covered in the covariance tests.
-
----
-
-## The `effective_cng` Correction
-
-The optional `terms="gaussian+effective_cng"` path adds a non-Gaussian correction on top of the Gaussian covariance, but this is **not** a first-principles trispectrum calculation.
-
-Instead, the code builds a smooth positive-semidefinite kernel in $\ln k$,
-
-$$
-K_{ij}^{(k)} =
-\exp\left[
--\frac{(\ln k_i - \ln k_j)^2}{2\,\sigma_{\ln k}^2}
-\right],
-$$
-
-where `cng_coherence` sets $\sigma_{\ln k}$, and then constructs
-
-$$
-\mathbf{C}^\mathrm{eff\_cng}
-= A_\mathrm{cng}\,
-\left(\mathbf{r}\mathbf{r}^T\right)
-\odot \mathbf{K},
-$$
-
-with:
-
-- $A_\mathrm{cng}$ set by `cng_amplitude`
-- $\mathbf{r}$ derived from the square root of the Gaussian diagonal
-- higher multipoles down-weighted by an ad hoc factor
-  $$
-  w_\ell = \frac{1}{\sqrt{1 + \ell/2}}
-  $$
-- $\mathbf{K}$ built from the same $k$-kernel in every multipole block
-
-This term is best understood as a placeholder for broad connected mode coupling that preserves the overall Gaussian scaling while introducing off-diagonal correlations in $k$.
-
----
-
-## What Is Implemented
-
-Today the code implements:
-
-1. The disconnected Gaussian covariance for galaxy power-spectrum multipoles in a cubic box.
-2. Constant shot noise through either `number_density` or `shot_noise`.
-3. Optional masking and global covariance rescaling.
-4. A phenomenological `effective_cng` term that adds smooth off-diagonal mode coupling.
-
----
-
-## What Is Still Missing
-
-The following pieces are **not** implemented in the current analytic covariance path:
-
-1. A first-principles connected non-Gaussian covariance derived from the matter or galaxy trispectrum.
-2. Survey-window convolution and mask-induced mixing between different $k$ bins and multipoles.
-3. Super-sample covariance and response-type large-scale background modulation terms.
-4. Cross-covariance involving density-split statistics such as $P_{qg}$.
-5. More realistic shot-noise or stochastic covariance models beyond a constant additive term.
-6. Any covariance dependence on geometry beyond the cubic-box mode-counting approximation.
-
-So, while `effective_cng` is useful as a flexible nuisance model, it should not be interpreted as the full connected covariance predicted by perturbation theory.
-
----
-
-## Current API
-
-The implemented analytic covariance is exposed as:
+The implemented covariance interfaces are:
 
 ```python
 analytic_pgg_covariance(
@@ -257,13 +246,51 @@ analytic_pgg_covariance(
 )
 ```
 
-The supported `terms` values are:
+```python
+analytic_pqq_covariance(
+    k,
+    poles,
+    ells=(0, 2, 4),
+    volume=...,
+    pair_order=...,
+    shot_noise=...,
+    mask=None,
+    rescale=1.0,
+    terms="gaussian",
+    mu_points=256,
+)
+```
 
-- `"gaussian"`
-- `"gaussian+effective_cng"`
+```python
+analytic_pqg_covariance(
+    k,
+    pqg_poles,
+    pqq_poles,
+    pgg_poles,
+    ells=(0, 2, 4),
+    volume=...,
+    ds_labels=...,
+    galaxy_shot_noise=...,
+    ds_pair_shot_noise=...,
+    ds_cross_shot_noise=None,
+    mask=None,
+    rescale=1.0,
+    terms="gaussian",
+    mu_points=256,
+)
+```
 
 ---
 
-## Interpretation
+## What Is Still Missing
 
-The analytic covariance currently in `drift` is a controlled Gaussian box covariance with a convenient phenomenological extension for connected mode coupling. It is appropriate as a fast fiducial covariance model for `P_{gg}` analyses, but it is not yet a complete survey covariance model.
+The following pieces are not implemented in the current analytic covariance path:
+
+1. First-principles connected non-Gaussian covariance for either `P_{gg}`, `P_{q_i q_j}`, or `P_{q_i g}`
+2. Beyond-Gaussian density-split covariance of any kind
+3. Survey-window convolution and mask-induced mode mixing
+4. Super-sample covariance and response terms
+5. Joint cross-covariance blocks involving multiple observable families
+6. Covariance dependence on geometry beyond the cubic-box approximation
+
+So the current implementation should be read as a fast Gaussian box covariance model, with a phenomenological connected extension for `P_{gg}` only.

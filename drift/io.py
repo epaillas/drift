@@ -5,7 +5,11 @@ from pathlib import Path
 
 import numpy as np
 
-from .covariance import analytic_pgg_covariance as _analytic_pgg_covariance
+from .covariance import (
+    analytic_pgg_covariance as _analytic_pgg_covariance,
+    analytic_pqg_covariance as _analytic_pqg_covariance,
+    analytic_pqq_covariance as _analytic_pqq_covariance,
+)
 
 
 def save_predictions(path, k: np.ndarray, multipoles_per_bin: dict) -> None:
@@ -208,6 +212,48 @@ def analytic_pgg_covariance(k_data, poles, ells, volume,
         terms=terms,
         cng_amplitude=cng_amplitude,
         cng_coherence=cng_coherence,
+    )
+
+
+def analytic_pqq_covariance(k_data, poles, ells, volume, pair_order,
+                            shot_noise, mask=None, rescale=1.0,
+                            terms="gaussian", mu_points=256):
+    """Fixed fiducial analytic covariance for DS-pair power-spectrum multipoles."""
+    return _analytic_pqq_covariance(
+        k_data,
+        poles,
+        ells=ells,
+        volume=volume,
+        pair_order=pair_order,
+        shot_noise=shot_noise,
+        mask=mask,
+        rescale=rescale,
+        terms=terms,
+        mu_points=mu_points,
+    )
+
+
+def analytic_pqg_covariance(k_data, pqg_poles, pqq_poles, pgg_poles, ells,
+                            volume, ds_labels, galaxy_shot_noise,
+                            ds_pair_shot_noise, ds_cross_shot_noise=None,
+                            mask=None, rescale=1.0, terms="gaussian",
+                            mu_points=256):
+    """Fixed fiducial analytic covariance for DS-galaxy power-spectrum multipoles."""
+    return _analytic_pqg_covariance(
+        k_data,
+        pqg_poles,
+        pqq_poles,
+        pgg_poles,
+        ells=ells,
+        volume=volume,
+        ds_labels=ds_labels,
+        galaxy_shot_noise=galaxy_shot_noise,
+        ds_pair_shot_noise=ds_pair_shot_noise,
+        ds_cross_shot_noise=ds_cross_shot_noise,
+        mask=mask,
+        rescale=rescale,
+        terms=terms,
+        mu_points=mu_points,
     )
 
 
