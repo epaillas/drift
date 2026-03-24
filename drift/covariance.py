@@ -1,9 +1,10 @@
-"""Analytic covariance utilities for power-spectrum multipoles."""
+"""Analytic covariance utilities for power-spectrum and correlation-function multipoles."""
 
 from __future__ import annotations
 
 import itertools
 import numpy as np
+from scipy.special import spherical_jn
 
 from .utils.cosmology import get_cosmology, get_linear_power
 from .utils.kernels import tophat_kernel
@@ -26,6 +27,18 @@ def _bin_widths_from_centers(k: np.ndarray) -> np.ndarray:
     if np.any(widths <= 0.0):
         raise ValueError("Inferred k-bin widths must be positive.")
     return widths
+
+
+def _validate_positive_increasing_grid(x: np.ndarray, name: str) -> np.ndarray:
+    """Validate a positive, strictly increasing one-dimensional grid."""
+    x = np.asarray(x, dtype=float)
+    if x.ndim != 1 or x.size == 0:
+        raise ValueError(f"{name} must be a non-empty 1-D array.")
+    if np.any(x <= 0.0):
+        raise ValueError(f"{name} must be strictly positive.")
+    if np.any(np.diff(x) <= 0.0):
+        raise ValueError(f"{name} must be strictly increasing.")
+    return x
 
 
 def _nmodes_cubic_box(k: np.ndarray, volume: float) -> np.ndarray:
@@ -851,6 +864,222 @@ def analytic_pqg_covariance(
 
     precision = np.linalg.inv(cov)
     return cov, precision
+
+
+def correlation_transform_matrix(
+    k: np.ndarray,
+    s: np.ndarray,
+    *,
+    ell: int,
+) -> np.ndarray:
+    r"""Return the linear map from ``P_ell(k)`` samples to ``xi_ell(s)`` samples.
+
+    The discrete transform uses bin-center widths inferred from ``k`` and the
+    same convention as :class:`cosmoprimo.fftlog.PowerToCorrelation`,
+
+    .. math::
+        \xi_{\ell}(s) = \frac{(-i)^{\ell}}{2 \pi^{2}} \int dk\, k^{2} P_{\ell}(k) j_{\ell}(ks).
+    """
+    k = _validate_positive_increasing_grid(k, "k")
+    s = _validate_positive_increasing_grid(s, "s")
+    if k.size < 2:
+        raise ValueError("At least two k bins are required to build the transform matrix.")
+
+    widths = _bin_widths_from_centers(k)
+    phase = (-1) ** (int(ell) // 2)
+    kernel = spherical_jn(int(ell), np.outer(s, k))
+    return phase * kernel * (k ** 2 * widths)[None, :] / (2.0 * np.pi ** 2)
+
+
+def propagate_covariance_to_correlation(
+    cov_k: np.ndarray,
+    k: np.ndarray,
+    s: np.ndarray,
+    ells=(0, 2, 4),
+    *,
+    observable_blocks: int = 1,
+) -> np.ndarray:
+    """Propagate a multipole covariance matrix from ``k`` space to ``s`` space."""
+    k = _validate_positive_increasing_grid(k, "k")
+    s = _validate_positive_increasing_grid(s, "s")
+    cov_k = np.asarray(cov_k, dtype=float)
+    ells = tuple(int(ell) for ell in ells)
+    observable_blocks = int(observable_blocks)
+    if observable_blocks <= 0:
+        raise ValueError("observable_blocks must be a positive integer.")
+
+    nk = len(k)
+    ns = len(s)
+    block_in = len(ells) * nk
+    expected = observable_blocks * block_in
+    if cov_k.shape != (expected, expected):
+        raise ValueError(
+            "cov_k shape is inconsistent with k, ells, and observable_blocks."
+        )
+
+    block_out = len(ells) * ns
+    transform = np.zeros((observable_blocks * block_out, observable_blocks * block_in), dtype=float)
+    for obs in range(observable_blocks):
+        row_offset = obs * block_out
+        col_offset = obs * block_in
+        for i, ell in enumerate(ells):
+            row = slice(row_offset + i * ns, row_offset + (i + 1) * ns)
+            col = slice(col_offset + i * nk, col_offset + (i + 1) * nk)
+            transform[row, col] = correlation_transform_matrix(k, s, ell=ell)
+
+    cov_s = transform @ cov_k @ transform.T
+    return 0.5 * (cov_s + cov_s.T)
+
+
+def _apply_covariance_mask(cov: np.ndarray, mask: np.ndarray | None) -> np.ndarray:
+    """Apply an optional boolean mask to a covariance matrix."""
+    if mask is None:
+        return cov
+    mask = np.asarray(mask, dtype=bool)
+    if mask.ndim != 1:
+        raise ValueError("mask must be a one-dimensional boolean array.")
+    if len(mask) != cov.shape[0]:
+        raise ValueError("mask length must match the covariance dimension.")
+    return cov[np.ix_(mask, mask)]
+
+
+def analytic_xigg_covariance(
+    k: np.ndarray,
+    s: np.ndarray,
+    poles,
+    ells=(0, 2, 4),
+    *,
+    volume: float,
+    number_density: float | None = None,
+    shot_noise: float | None = None,
+    mask: np.ndarray | None = None,
+    rescale: float = 1.0,
+    terms: str = "gaussian",
+    mu_points: int = 256,
+    cng_amplitude: float = 0.0,
+    cng_coherence: float = 0.35,
+    ssc_sigma_b2: float | None = None,
+):
+    """Configuration-space covariance for galaxy correlation-function multipoles."""
+    cov_k, _ = analytic_pgg_covariance(
+        k,
+        poles,
+        ells=ells,
+        volume=volume,
+        number_density=number_density,
+        shot_noise=shot_noise,
+        mask=None,
+        rescale=rescale,
+        terms=terms,
+        mu_points=mu_points,
+        cng_amplitude=cng_amplitude,
+        cng_coherence=cng_coherence,
+        ssc_sigma_b2=ssc_sigma_b2,
+    )
+    cov_s = propagate_covariance_to_correlation(cov_k, k, s, ells=ells, observable_blocks=1)
+    cov_s = _apply_covariance_mask(cov_s, mask)
+    precision = np.linalg.inv(cov_s)
+    return cov_s, precision
+
+
+def analytic_xiqq_covariance(
+    k: np.ndarray,
+    s: np.ndarray,
+    poles,
+    ells=(0, 2, 4),
+    *,
+    volume: float,
+    pair_order,
+    shot_noise,
+    mask: np.ndarray | None = None,
+    rescale: float = 1.0,
+    terms: str = "gaussian",
+    mu_points: int = 256,
+    cng_amplitude: float = 0.0,
+    cng_coherence: float = 0.35,
+    ssc_sigma_b2: float | None = None,
+):
+    """Configuration-space covariance for density-split pair correlation multipoles."""
+    pair_order = _normalize_pair_order(pair_order)
+    cov_k, _ = analytic_pqq_covariance(
+        k,
+        poles,
+        ells=ells,
+        volume=volume,
+        pair_order=pair_order,
+        shot_noise=shot_noise,
+        mask=None,
+        rescale=rescale,
+        terms=terms,
+        mu_points=mu_points,
+        cng_amplitude=cng_amplitude,
+        cng_coherence=cng_coherence,
+        ssc_sigma_b2=ssc_sigma_b2,
+    )
+    cov_s = propagate_covariance_to_correlation(
+        cov_k,
+        k,
+        s,
+        ells=ells,
+        observable_blocks=len(pair_order),
+    )
+    cov_s = _apply_covariance_mask(cov_s, mask)
+    precision = np.linalg.inv(cov_s)
+    return cov_s, precision
+
+
+def analytic_xiqg_covariance(
+    k: np.ndarray,
+    s: np.ndarray,
+    pqg_poles,
+    pqq_poles,
+    pgg_poles,
+    ells=(0, 2, 4),
+    *,
+    volume: float,
+    ds_labels,
+    galaxy_shot_noise: float,
+    ds_pair_shot_noise,
+    ds_cross_shot_noise=None,
+    mask: np.ndarray | None = None,
+    rescale: float = 1.0,
+    terms: str = "gaussian",
+    mu_points: int = 256,
+    cng_amplitude: float = 0.0,
+    cng_coherence: float = 0.35,
+    ssc_sigma_b2: float | None = None,
+):
+    """Configuration-space covariance for density-split-galaxy correlation multipoles."""
+    ds_labels = _normalize_label_order(ds_labels)
+    cov_k, _ = analytic_pqg_covariance(
+        k,
+        pqg_poles,
+        pqq_poles,
+        pgg_poles,
+        ells=ells,
+        volume=volume,
+        ds_labels=ds_labels,
+        galaxy_shot_noise=galaxy_shot_noise,
+        ds_pair_shot_noise=ds_pair_shot_noise,
+        ds_cross_shot_noise=ds_cross_shot_noise,
+        mask=None,
+        rescale=rescale,
+        terms=terms,
+        mu_points=mu_points,
+        cng_amplitude=cng_amplitude,
+        cng_coherence=cng_coherence,
+        ssc_sigma_b2=ssc_sigma_b2,
+    )
+    cov_s = propagate_covariance_to_correlation(
+        cov_k,
+        k,
+        s,
+        ells=ells,
+        observable_blocks=len(ds_labels),
+    )
+    cov_s = _apply_covariance_mask(cov_s, mask)
+    precision = np.linalg.inv(cov_s)
+    return cov_s, precision
 
 
 def correlation_matrix(cov: np.ndarray) -> np.ndarray:

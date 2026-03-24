@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from drift import compute_correlation_multipoles, power_to_correlation_multipoles
 from drift.utils.cosmology import get_cosmology, get_linear_power, get_growth_rate
 from drift.theory.galaxy.bias import GalaxyEFTParams
 from drift.theory.galaxy.power_spectrum import pgg_mu, pgg_eft_mu
@@ -154,4 +155,42 @@ def test_galaxy_emulator_one_loop_matches_direct_nonzero_b2bs2(cosmo, k):
 
     np.testing.assert_allclose(pred_emulator, pred_direct, rtol=1e-3)
 
+
+@pytest.mark.parametrize("space", ["redshift", "real"])
+@pytest.mark.parametrize("mode", ["tree", "eft_ct", "eft", "one_loop"])
+def test_galaxy_correlation_multipoles_all_modes(cosmo, space, mode):
+    k = np.logspace(np.log10(0.005), np.log10(0.3), 96)
+    gal = GalaxyEFTParams(
+        b1=1.8,
+        b2=0.5,
+        bs2=-0.3,
+        b3nl=0.1,
+        c0=5.0,
+        c2=2.0,
+        c4=0.0,
+        s0=100.0,
+        s2=10.0,
+    )
+
+    def model(kk, mu):
+        if mode == "tree":
+            return pgg_mu(kk, mu, z=0.5, cosmo=cosmo, b1=gal.b1, space=space)
+        return pgg_eft_mu(
+            kk,
+            mu,
+            z=0.5,
+            cosmo=cosmo,
+            gal_params=gal,
+            space=space,
+            mode=mode,
+        )
+
+    s, xi = compute_correlation_multipoles(k, model, ells=(0, 2, 4))
+    poles = compute_multipoles(k, model, ells=(0, 2, 4))
+    s_ref, xi_ref = power_to_correlation_multipoles(k, poles, ells=(0, 2, 4))
+
+    np.testing.assert_allclose(s, s_ref, rtol=1e-12, atol=0.0)
+    for ell in (0, 2, 4):
+        assert xi[ell].shape == k.shape
+        np.testing.assert_allclose(xi[ell], xi_ref[ell], rtol=1e-12, atol=0.0)
 

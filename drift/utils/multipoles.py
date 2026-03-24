@@ -1,8 +1,8 @@
 """Legendre multipole projection utilities."""
 
 import numpy as np
+from cosmoprimo.fftlog import PowerToCorrelation
 from scipy.special import legendre as scipy_legendre
-from scipy.integrate import quad
 
 
 def legendre(ell: int, mu: np.ndarray) -> np.ndarray:
@@ -26,6 +26,24 @@ def legendre(ell: int, mu: np.ndarray) -> np.ndarray:
 def _gauss_legendre_grid(n: int = 200):
     """Return n-point Gauss-Legendre nodes and weights on [-1, 1]."""
     return np.polynomial.legendre.leggauss(n)
+
+
+def _validate_fftlog_k_grid(k: np.ndarray, rtol: float = 1e-4) -> np.ndarray:
+    """Validate that k is strictly increasing and close to log-spaced."""
+    k = np.asarray(k, dtype=float)
+    if k.ndim != 1:
+        raise ValueError("k must be a one-dimensional array.")
+    if k.size < 2:
+        raise ValueError("k must contain at least two points.")
+    if np.any(k <= 0.0):
+        raise ValueError("k must be strictly positive for FFTLog transforms.")
+    if np.any(np.diff(k) <= 0.0):
+        raise ValueError("k must be strictly increasing for FFTLog transforms.")
+
+    log_diffs = np.diff(np.log(k))
+    if not np.allclose(log_diffs, log_diffs[0], rtol=rtol, atol=0.0):
+        raise ValueError("k must be uniformly log-spaced for FFTLog transforms.")
+    return k
 
 
 def project_multipole(
@@ -114,3 +132,62 @@ def compute_multipoles(
         ell: project_multipole(k, p_of_mu, ell, mu_grid=mu_grid)
         for ell in ells
     }
+
+
+def power_to_correlation_multipoles(
+    k: np.ndarray,
+    poles: dict,
+    ells=(0, 2, 4),
+    q=1.0,
+    extrap="log",
+    **fftlog_kwargs,
+) -> tuple:
+    """Transform power-spectrum multipoles into correlation-function multipoles."""
+    k = _validate_fftlog_k_grid(k)
+    ells = tuple(ells)
+
+    missing = [ell for ell in ells if ell not in poles]
+    if missing:
+        raise ValueError(f"Missing power-spectrum multipoles for ell={missing}.")
+
+    pk = np.vstack([np.asarray(poles[ell], dtype=float) for ell in ells])
+    if pk.shape[1] != k.size:
+        raise ValueError("Each multipole array must have the same length as k.")
+
+    s, xi = PowerToCorrelation(k, ell=ells, q=q, **fftlog_kwargs)(pk, extrap=extrap)
+    if np.ndim(s) == 2:
+        s = np.asarray(s[0], dtype=float)
+    else:
+        s = np.asarray(s, dtype=float)
+    xi = np.asarray(xi, dtype=float)
+    return s, {ell: xi[i] for i, ell in enumerate(ells)}
+
+
+def compute_correlation_multipoles(
+    k: np.ndarray,
+    model_callable,
+    ells=(0, 2, 4),
+    mu_grid=None,
+    q=1.0,
+    extrap="log",
+    fftlog_kwargs=None,
+    **model_kwargs,
+) -> tuple:
+    """Project P(k, mu) to multipoles and transform them to xi_ell(s)."""
+    if fftlog_kwargs is None:
+        fftlog_kwargs = {}
+    poles = compute_multipoles(
+        k,
+        model_callable,
+        ells=ells,
+        mu_grid=mu_grid,
+        **model_kwargs,
+    )
+    return power_to_correlation_multipoles(
+        k,
+        poles,
+        ells=ells,
+        q=q,
+        extrap=extrap,
+        **fftlog_kwargs,
+    )

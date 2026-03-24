@@ -17,7 +17,13 @@ from .ir_resummation import (
     split_wiggle_nowiggle,
 )
 from .kernels import gaussian_kernel, tophat_kernel
-from .multipoles import compute_multipoles, legendre, project_multipole
+from .multipoles import (
+    compute_correlation_multipoles,
+    compute_multipoles,
+    legendre,
+    power_to_correlation_multipoles,
+    project_multipole,
+)
 from .one_loop import compute_P13, compute_P22, compute_one_loop_matter
 
 __all__ = [
@@ -28,6 +34,7 @@ __all__ = [
     "_DEFAULT_PARAMS",
     "compute_P13",
     "compute_P22",
+    "compute_correlation_multipoles",
     "compute_multipoles",
     "compute_one_loop_matter",
     "compute_sigma_dd",
@@ -38,6 +45,7 @@ __all__ = [
     "get_linear_power",
     "ir_damping",
     "legendre",
+    "power_to_correlation_multipoles",
     "project_multipole",
     "split_wiggle_nowiggle",
     "tophat_kernel",

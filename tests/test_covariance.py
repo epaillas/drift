@@ -11,9 +11,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from drift.covariance import (
     analytic_pgg_covariance,
+    analytic_xigg_covariance,
     correlation_matrix,
+    correlation_transform_matrix,
     estimate_ssc_sigma_b2,
     plot_correlation_matrix,
+    propagate_covariance_to_correlation,
 )
 
 
@@ -214,3 +217,50 @@ def test_correlation_plot_helper_returns_axes():
     fig, ax = plot_correlation_matrix(cov, k=k, ells=(0, 2), title="test")
     assert ax.get_title() == "test"
     assert len(fig.axes) >= 1
+
+
+def test_correlation_transform_matrix_has_expected_shape():
+    k = np.array([0.05, 0.10, 0.15])
+    s = np.array([20.0, 40.0, 60.0, 80.0])
+    matrix = correlation_transform_matrix(k, s, ell=2)
+    assert matrix.shape == (4, 3)
+
+
+def test_propagated_covariance_is_symmetric_and_positive_semidefinite():
+    k = np.array([0.05, 0.10, 0.15])
+    s = np.array([20.0, 40.0, 60.0])
+    cov_k = np.diag(np.arange(1.0, 7.0))
+    cov_s = propagate_covariance_to_correlation(cov_k, k, s, ells=(0, 2))
+
+    np.testing.assert_allclose(cov_s, cov_s.T, atol=1e-12)
+    eigvals = np.linalg.eigvalsh(cov_s)
+    assert np.all(eigvals >= -1.0e-12)
+
+
+def test_analytic_xigg_covariance_matches_propagated_pgg_covariance():
+    k = np.array([0.05, 0.10, 0.15])
+    s = np.array([20.0, 40.0, 60.0])
+    poles = _fiducial_poles(k)
+
+    cov_k, _ = analytic_pgg_covariance(
+        k,
+        poles,
+        ells=(0, 2),
+        volume=6.0e8,
+        shot_noise=200.0,
+        terms="gaussian+effective_cng",
+        cng_amplitude=0.15,
+    )
+    cov_ref = propagate_covariance_to_correlation(cov_k, k, s, ells=(0, 2))
+    cov_xi, _ = analytic_xigg_covariance(
+        k,
+        s,
+        poles,
+        ells=(0, 2),
+        volume=6.0e8,
+        shot_noise=200.0,
+        terms="gaussian+effective_cng",
+        cng_amplitude=0.15,
+    )
+
+    np.testing.assert_allclose(cov_xi, cov_ref)

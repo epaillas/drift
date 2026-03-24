@@ -354,6 +354,18 @@ analytic_pqg_covariance(
 )
 ```
 
+Configuration-space covariance is exposed through linear propagation of these
+same multipole covariances into `xi_ell(s)`. The implementation uses the same
+`P_ell(k) -> xi_ell(s)` convention as the theory transforms, but it does not
+introduce a separately calibrated direct `xi` covariance model.
+
+```python
+analytic_xigg_covariance(k, s, poles, ...)
+analytic_xiqq_covariance(k, s, poles, pair_order=..., shot_noise=..., ...)
+analytic_xiqg_covariance(k, s, pqg_poles, pqq_poles, pgg_poles, ds_labels=..., ...)
+propagate_covariance_to_correlation(cov_k, k, s, ells=(0, 2, 4), observable_blocks=1)
+```
+
 ---
 
 ## What Is Still Missing

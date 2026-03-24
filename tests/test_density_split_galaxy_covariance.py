@@ -7,7 +7,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from drift.covariance import analytic_pqg_covariance
+from drift.covariance import analytic_pqg_covariance, analytic_xiqg_covariance, propagate_covariance_to_correlation
 
 
 DS_LABELS = ("DS1", "DS2")
@@ -161,6 +161,50 @@ def test_analytic_pqg_covariance_mask_and_rescale_match_expectation():
         rescale=5.0,
     )
     np.testing.assert_allclose(masked_cov, full_cov[np.ix_(mask, mask)] / 5.0)
+
+
+def test_analytic_xiqg_covariance_matches_propagated_pqg_covariance():
+    k = np.array([0.05, 0.10, 0.15])
+    s = np.array([20.0, 40.0, 60.0])
+
+    cov_k, _ = analytic_pqg_covariance(
+        k,
+        _fiducial_pqg_poles(k),
+        _fiducial_pqq_poles(k),
+        _fiducial_pgg_poles(k),
+        ells=ELLS,
+        volume=8.0e8,
+        ds_labels=DS_LABELS,
+        galaxy_shot_noise=300.0,
+        ds_pair_shot_noise=_pair_shot_noise(),
+        ds_cross_shot_noise=_cross_shot_noise(),
+        terms="gaussian+effective_cng",
+        cng_amplitude=0.2,
+    )
+    cov_ref = propagate_covariance_to_correlation(
+        cov_k,
+        k,
+        s,
+        ells=ELLS,
+        observable_blocks=len(DS_LABELS),
+    )
+    cov_xi, _ = analytic_xiqg_covariance(
+        k,
+        s,
+        _fiducial_pqg_poles(k),
+        _fiducial_pqq_poles(k),
+        _fiducial_pgg_poles(k),
+        ells=ELLS,
+        volume=8.0e8,
+        ds_labels=DS_LABELS,
+        galaxy_shot_noise=300.0,
+        ds_pair_shot_noise=_pair_shot_noise(),
+        ds_cross_shot_noise=_cross_shot_noise(),
+        terms="gaussian+effective_cng",
+        cng_amplitude=0.2,
+    )
+
+    np.testing.assert_allclose(cov_xi, cov_ref)
 
 
 def test_analytic_pqg_covariance_scales_with_volume_and_noise():

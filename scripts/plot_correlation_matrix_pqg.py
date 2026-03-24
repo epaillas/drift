@@ -290,34 +290,50 @@ def _resolve_pqg_covariance(args, k, flat, full_mask, quantiles, labels, fiducia
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, default=CONFIG_PATH, metavar="PATH")
-    parser.add_argument("--quantiles", nargs="+", default=None, metavar="Q")
-    parser.add_argument("--mock-rebin", type=int, default=5, metavar="N")
-    parser.add_argument("--mock-kmin", type=float, default=None, metavar="VALUE")
-    parser.add_argument("--mock-kmax", type=float, default=None, metavar="VALUE")
-    parser.add_argument("--analytic-kmin", type=float, default=None, metavar="VALUE")
-    parser.add_argument("--analytic-kmax", type=float, default=None, metavar="VALUE")
-    parser.add_argument("--analytic-dk", type=float, default=None, metavar="VALUE")
+    parser.add_argument("--config", type=Path, default=CONFIG_PATH, metavar="PATH",
+                        help="Density-split theory configuration used to build analytic fiducial spectra.")
+    parser.add_argument("--quantiles", nargs="+", default=None, metavar="Q",
+                        help="Density-split quantiles to include, for example --quantiles 1 5.")
+    parser.add_argument("--mock-rebin", type=int, default=5, metavar="N",
+                        help="Rebin factor used when loading the mock P_qg multipoles.")
+    parser.add_argument("--mock-kmin", type=float, default=None, metavar="VALUE",
+                        help="Minimum k retained on the mock covariance path, in h/Mpc.")
+    parser.add_argument("--mock-kmax", type=float, default=None, metavar="VALUE",
+                        help="Maximum k retained on the mock covariance path, in h/Mpc.")
+    parser.add_argument("--analytic-kmin", type=float, default=None, metavar="VALUE",
+                        help="Minimum k of the linear analytic grid, in h/Mpc.")
+    parser.add_argument("--analytic-kmax", type=float, default=None, metavar="VALUE",
+                        help="Maximum k of the linear analytic grid, in h/Mpc.")
+    parser.add_argument("--analytic-dk", type=float, default=None, metavar="VALUE",
+                        help="Spacing of the analytic k grid, in h/Mpc.")
     parser.add_argument("--rebin", type=int, default=None, metavar="N", help=argparse.SUPPRESS)
     parser.add_argument("--kmin", type=float, default=None, metavar="VALUE", help=argparse.SUPPRESS)
     parser.add_argument("--kmax", nargs="+", default=None, metavar="[ELL:]VALUE", help=argparse.SUPPRESS)
     parser.add_argument("--nk", type=int, default=None, metavar="N", help=argparse.SUPPRESS)
     parser.add_argument("--diag-cov", action="store_true",
-                        help="Plot diagonal covariance instead of the analytic source.")
+                        help="Use a diagonal covariance built from the fiducial P_qg data vector instead of mock or analytic covariance.")
     parser.add_argument("--analytic-cov", action="store_true",
-                        help="Plot analytic cubic-box covariance.")
+                        help="Use the analytic cubic-box P_qg covariance instead of the mock covariance.")
     parser.add_argument("--analytic-cov-terms", type=str, default="gaussian", metavar="TERMS",
                         help="Analytic covariance terms: 'gaussian', 'gaussian+effective_cng', 'gaussian+ssc', or 'gaussian+effective_cng+ssc'.")
-    parser.add_argument("--cov-rescale", type=float, default=64.0, metavar="FACTOR")
-    parser.add_argument("--box-volume", type=float, default=1.0e9, metavar="V")
-    parser.add_argument("--galaxy-shot-noise", type=float, default=400.0, metavar="P0")
-    parser.add_argument("--ds-pair-auto-shot-noise", type=float, default=250.0, metavar="PQQ0")
-    parser.add_argument("--ds-pair-cross-shot-noise", type=float, default=40.0, metavar="PQQX")
-    parser.add_argument("--ds-cross-shot-noise", type=float, default=0.0, metavar="PQG0")
+    parser.add_argument("--cov-rescale", type=float, default=64.0, metavar="FACTOR",
+                        help="Divide the covariance matrix by this factor before plotting.")
+    parser.add_argument("--box-volume", type=float, default=1.0e9, metavar="V",
+                        help="Survey or box volume in (Mpc/h)^3 for the analytic covariance path.")
+    parser.add_argument("--galaxy-shot-noise", type=float, default=400.0, metavar="P0",
+                        help="Constant galaxy shot-noise power entering the analytic P_qg covariance, in (Mpc/h)^3.")
+    parser.add_argument("--ds-pair-auto-shot-noise", type=float, default=250.0, metavar="PQQ0",
+                        help="Constant DS auto-pair shot noise entering the analytic P_qg covariance, in (Mpc/h)^3.")
+    parser.add_argument("--ds-pair-cross-shot-noise", type=float, default=40.0, metavar="PQQX",
+                        help="Constant DS cross-pair shot noise entering the analytic P_qg covariance, in (Mpc/h)^3.")
+    parser.add_argument("--ds-cross-shot-noise", type=float, default=0.0, metavar="PQG0",
+                        help="Constant DS-galaxy cross shot-noise term entering the analytic P_qg covariance, in (Mpc/h)^3.")
     parser.add_argument("--cng-amplitude", type=float, default=None, metavar="A",
                         help="Defaults to 0.2 when effective_cng is enabled, otherwise 0.")
-    parser.add_argument("--cng-coherence", type=float, default=0.35, metavar="SIGMA")
-    parser.add_argument("--ssc-sigma-b2", type=float, default=None, metavar="VAR")
+    parser.add_argument("--cng-coherence", type=float, default=0.35, metavar="SIGMA",
+                        help="Log-k coherence length of the effective connected covariance term.")
+    parser.add_argument("--ssc-sigma-b2", type=float, default=None, metavar="VAR",
+                        help="Long-mode density variance used by the SSC term on the analytic covariance path.")
     args = parser.parse_args()
 
     quantiles = _parse_quantiles(args.quantiles)

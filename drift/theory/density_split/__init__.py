@@ -12,6 +12,10 @@ from .counterterms import (
     galaxy_counterterm,
     stochastic_term,
 )
+from .correlation import (
+    compute_ds_galaxy_correlation_multipoles,
+    compute_dspair_correlation_multipoles,
+)
 from .eft_config import DensitySplitEFTConfig, load_density_split_eft_config
 from .eft_power_spectrum import (
     _ds_galaxy_tree_eft_pkmu,
@@ -37,6 +41,8 @@ __all__ = [
     "DensitySplitEFTParameters",
     "DensitySplitTheoryConfig",
     "_ds_galaxy_tree_eft_pkmu",
+    "compute_ds_galaxy_correlation_multipoles",
+    "compute_dspair_correlation_multipoles",
     "default_split_bins",
     "density_split_counterterm",
     "density_split_pair_stochastic_term",

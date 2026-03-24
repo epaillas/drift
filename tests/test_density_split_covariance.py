@@ -7,7 +7,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from drift.covariance import analytic_pqq_covariance
+from drift.covariance import analytic_pqq_covariance, analytic_xiqq_covariance, propagate_covariance_to_correlation
 
 
 PAIR_ORDER = (("DS1", "DS1"), ("DS1", "DS2"), ("DS2", "DS2"))
@@ -110,6 +110,44 @@ def test_analytic_pqq_covariance_accepts_reversed_pair_keys():
         shot_noise=_pair_shot_noise(),
     )
     np.testing.assert_allclose(cov_a, cov_b)
+
+
+def test_analytic_xiqq_covariance_matches_propagated_pqq_covariance():
+    k = np.array([0.05, 0.10, 0.15])
+    s = np.array([20.0, 40.0, 60.0])
+    poles = _fiducial_pair_poles(k)
+    shot = _pair_shot_noise()
+
+    cov_k, _ = analytic_pqq_covariance(
+        k,
+        poles,
+        ells=ELLS,
+        volume=8.0e8,
+        pair_order=PAIR_ORDER,
+        shot_noise=shot,
+        terms="gaussian+ssc",
+        ssc_sigma_b2=1.0e-4,
+    )
+    cov_ref = propagate_covariance_to_correlation(
+        cov_k,
+        k,
+        s,
+        ells=ELLS,
+        observable_blocks=len(PAIR_ORDER),
+    )
+    cov_xi, _ = analytic_xiqq_covariance(
+        k,
+        s,
+        poles,
+        ells=ELLS,
+        volume=8.0e8,
+        pair_order=PAIR_ORDER,
+        shot_noise=shot,
+        terms="gaussian+ssc",
+        ssc_sigma_b2=1.0e-4,
+    )
+
+    np.testing.assert_allclose(cov_xi, cov_ref)
 
 
 def test_analytic_pqq_covariance_mask_and_rescale_match_expectation():

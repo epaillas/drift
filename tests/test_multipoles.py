@@ -2,9 +2,16 @@
 
 import numpy as np
 import pytest
+from cosmoprimo.fftlog import PowerToCorrelation
 from scipy.special import legendre as scipy_legendre
 
-from drift.utils.multipoles import legendre, project_multipole, compute_multipoles
+from drift.utils.multipoles import (
+    compute_correlation_multipoles,
+    compute_multipoles,
+    legendre,
+    power_to_correlation_multipoles,
+    project_multipole,
+)
 
 
 # ---- legendre ----------------------------------------------------------------
@@ -82,3 +89,44 @@ def test_compute_multipoles_keys():
     assert set(result.keys()) == {0, 2, 4}
     for v in result.values():
         assert v.shape == (2,)
+
+
+def test_power_to_correlation_matches_cosmoprimo():
+    k = np.logspace(-3, -0.5, 64)
+    poles = {
+        0: np.exp(-k),
+        2: 0.5 * np.exp(-2.0 * k),
+    }
+
+    s, xi = power_to_correlation_multipoles(k, poles, ells=(0, 2), q=0.0)
+    s_ref, xi_ref = PowerToCorrelation(k, ell=(0, 2), q=0.0)(
+        np.vstack([poles[0], poles[2]]),
+        extrap="log",
+    )
+
+    np.testing.assert_allclose(s, s_ref[0], rtol=1e-12, atol=0.0)
+    np.testing.assert_allclose(xi[0], xi_ref[0], rtol=1e-12, atol=0.0)
+    np.testing.assert_allclose(xi[2], xi_ref[1], rtol=1e-12, atol=0.0)
+
+
+def test_power_to_correlation_rejects_non_log_spaced_k():
+    k = np.array([0.01, 0.02, 0.05, 0.08])
+    poles = {0: np.ones_like(k)}
+
+    with pytest.raises(ValueError, match="log-spaced"):
+        power_to_correlation_multipoles(k, poles, ells=(0,))
+
+
+def test_compute_correlation_multipoles_returns_expected_keys():
+    k = np.logspace(-2, -0.2, 64)
+
+    def model(kk, mu):
+        return np.ones((len(kk), len(mu)))
+
+    s, xi = compute_correlation_multipoles(k, model, ells=(0, 2, 4))
+
+    assert s.shape == k.shape
+    assert set(xi) == {0, 2, 4}
+    assert xi[0].shape == k.shape
+    assert xi[2].shape == k.shape
+    assert xi[4].shape == k.shape
