@@ -15,7 +15,7 @@ DRIFT computes perturbation-theory predictions for density-split (DS) and galaxy
 
 Density-split statistics divide a survey volume into quantiles $q_i$ ranked by local smoothed density. Each quantile carries a characteristic large-scale bias that encodes its environment. DRIFT models the Fourier-space cross-spectra of these quantiles with matter or a galaxy tracer, projects them onto Legendre multipoles, and optionally transforms them to configuration space.
 
-The models are built on Standard Perturbation Theory (SPT) and the Effective Field Theory (EFT) of Large-Scale Structure. Inference-time speed is achieved through analytic template decomposition: bias-independent loop integrals are pre-computed once per cosmology and re-assembled for any parameter combination at negligible cost.
+The tree-level models use Kaiser redshift-space perturbation theory. The higher-order models are EFT descriptions of large-scale structure: their one-loop matter and bias kernels are computed from SPT, then assembled together with EFT counterterms and nuisance terms. Inference-time speed is achieved through analytic template decomposition: bias-independent loop integrals are pre-computed once per cosmology and re-assembled for any parameter combination at negligible cost.
 
 ---
 
@@ -30,7 +30,7 @@ The models are built on Standard Perturbation Theory (SPT) and the Effective Fie
 | `dspair_pkmu` / `pqq_mu` | $P_{q_i q_j}(k, \mu)$ — DS-pair auto |
 | `galaxy_pkmu` / `pgg_mu` | $P_{gg}(k, \mu)$ — galaxy auto (Kaiser) |
 
-### EFT / one-loop
+### EFT models
 
 | Function | Observable | Modes |
 |---|---|---|
@@ -38,7 +38,7 @@ The models are built on Standard Perturbation Theory (SPT) and the Effective Fie
 | `dspair_eft_pkmu` / `pqq_eft_mu` | $P_{q_i q_j}(k, \mu)$ | `tree`, `eft_ct`, `eft`, `one_loop` |
 | `galaxy_eft_pkmu` / `pgg_eft_mu` | $P_{gg}(k, \mu)$ | `tree`, `eft_ct`, `eft`, `one_loop` |
 
-Mode meanings: `tree` — Kaiser; `eft_ct` — tree + EFT counterterms; `eft` — eft_ct + stochastic terms; `one_loop` — full SPT one-loop with all bias operators.
+Mode meanings: `tree` — tree-level EFT containers with no counterterms or stochastic terms; `eft_ct` — tree + EFT counterterms; `eft` — eft_ct + stochastic terms; `one_loop` — full one-loop EFT model: SPT one-loop matter/bias terms plus EFT counterterms, FoG, and stochastic terms.
 
 All functions accept `space='redshift'` (default) or `space='real'`, and `ds_model` variants `'baseline'`, `'rsd_selection'`, or `'phenomenological'`.
 
