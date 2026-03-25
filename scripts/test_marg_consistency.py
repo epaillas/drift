@@ -20,7 +20,7 @@ from drift.utils.cosmology import get_cosmology
 from drift.emulators.galaxy import GalaxyTemplateEmulator
 from drift.analytic_marginalization import MarginalizedLikelihood
 from drift.synthetic import make_synthetic_pgg
-from drift.io import diagonal_covariance
+from drift.io import build_diagonal_covariance
 
 # --- Config ---
 MODE = "eft_ct"
@@ -44,7 +44,7 @@ def main():
     print("Generating synthetic data ...")
     print(f"  True params: {TRUE_PARAMS}")
     data_y, _ = make_synthetic_pgg(k, ELLS, Z, SPACE, MODE, TRUE_PARAMS, cosmo)
-    cov, precision = diagonal_covariance(data_y, rescale=COV_RESCALE)
+    cov, precision = build_diagonal_covariance(data_y, rescale=COV_RESCALE)
     print(f"  Data vector length: {len(data_y)}")
 
     # 2. Build emulator

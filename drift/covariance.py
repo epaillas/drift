@@ -1122,6 +1122,7 @@ def plot_correlation_matrix(
     """Plot a covariance or correlation matrix with optional ell boundaries."""
     import matplotlib.pyplot as plt
 
+    ell_labels = tuple(ells) if ells is not None else None
     matrix = np.asarray(cov_or_corr, dtype=float)
     diag = np.diag(matrix)
     if not np.allclose(diag, 1.0, atol=1e-8, rtol=1e-8):
@@ -1138,14 +1139,21 @@ def plot_correlation_matrix(
     if title is not None:
         ax.set_title(title)
 
-    if ells is not None and (k is not None or block_sizes is not None):
-        edges = multipole_block_edges(k=k, ells=ells, block_sizes=block_sizes)
+    if ell_labels is not None and (k is not None or block_sizes is not None):
+        edges = multipole_block_edges(k=k, ells=ell_labels, block_sizes=block_sizes)
         centers = [0.5 * (start + stop - 1) for start, stop in zip(edges[:-1], edges[1:])]
         for edge in edges[1:-1]:
             ax.axvline(edge - 0.5, color="k", lw=0.6, alpha=0.6)
             ax.axhline(edge - 0.5, color="k", lw=0.6, alpha=0.6)
-        ax.set_xticks(centers, [rf"$\ell={ell}$" for ell in ells], rotation=45, ha="right")
-        ax.set_yticks(centers, [rf"$\ell={ell}$" for ell in ells])
+        if len(centers) % len(ell_labels) != 0:
+            raise ValueError("block_sizes must contain a whole number of repeated ell groups.")
+        repeated_ell_labels = [
+            rf"$\ell={ell}$"
+            for _ in range(len(centers) // len(ell_labels))
+            for ell in ell_labels
+        ]
+        ax.set_xticks(centers, repeated_ell_labels, rotation=45, ha="right")
+        ax.set_yticks(centers, repeated_ell_labels)
 
     if colorbar:
         fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04, label="correlation")

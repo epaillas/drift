@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from drift.io import load_measurements
+from drift.io import load_observable_measurements
 
 OUTPUT_DIR  = Path(__file__).parents[1] / "outputs"
 RSD_PATH    = OUTPUT_DIR / "dsg_measured.hdf5"
@@ -33,8 +33,8 @@ def main():
             print(f"Missing: {p}")
         raise SystemExit(1)
 
-    k_rsd,  rsd_poles  = load_measurements(RSD_PATH,  nquantiles=NQUANTILES, ells=ELLS)
-    k_real, real_poles = load_measurements(REAL_PATH, nquantiles=NQUANTILES, ells=ELLS)
+    k_rsd,  rsd_poles  = load_observable_measurements(RSD_PATH, "pqg", nquantiles=NQUANTILES, ells=ELLS)
+    k_real, real_poles = load_observable_measurements(REAL_PATH, "pqg", nquantiles=NQUANTILES, ells=ELLS)
 
     labels = [f"DS{i+1}" for i in range(NQUANTILES)]
     colors = plt.cm.RdBu_r(np.linspace(0.1, 0.9, NQUANTILES))

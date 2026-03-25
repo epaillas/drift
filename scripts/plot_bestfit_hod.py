@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from drift.utils.cosmology import get_cosmology
-from drift.io import load_measurements, mock_covariance
+from drift.io import estimate_mock_covariance, load_observable_measurements
 from inference_dsg import _parse_kmax, _build_data_mask, make_direct_theory_model, ELLS, Z, R, KERNEL, SPACE
 from plot_bestfit_dsg import _build_params
 
@@ -102,7 +102,7 @@ def main():
         print(f"  {name}: {val:.4f}")
 
     # Load measurements
-    k, measured = load_measurements(MEAS_PATH, nquantiles=5, ells=ELLS, rebin=args.rebin)
+    k, measured = load_observable_measurements(MEAS_PATH, "pqg", nquantiles=5, ells=ELLS, rebin=args.rebin)
 
     # Build kmax/kmin mask — identical logic to inference_hod.py
     kmax_dict = _parse_kmax(args.kmax, ELLS)
@@ -111,8 +111,8 @@ def main():
     mask = mask & kmin_mask
 
     # Compute per-bin uncertainties from mock covariance diagonal
-    cov_masked, _ = mock_covariance(
-        COV_DIR, "ds", ELLS, mask=mask, rescale=args.cov_rescale,
+    cov_masked = estimate_mock_covariance(
+        COV_DIR, "pqg", ELLS, mask=mask, rescale=args.cov_rescale,
         rebin=args.rebin, nquantiles=5, quantiles=QUANTILES,
     )
     err_masked = np.sqrt(np.diag(cov_masked))

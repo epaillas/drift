@@ -219,6 +219,32 @@ def test_correlation_plot_helper_returns_axes():
     assert len(fig.axes) >= 1
 
 
+def test_correlation_plot_helper_repeats_ell_labels_for_multiple_block_groups():
+    cov = np.eye(8)
+    fig, ax = plot_correlation_matrix(
+        cov,
+        ells=(0, 2),
+        block_sizes=[1, 1, 1, 1, 1, 1, 1, 1],
+        title="test",
+    )
+
+    xticklabels = [tick.get_text() for tick in ax.get_xticklabels()]
+    yticklabels = [tick.get_text() for tick in ax.get_yticklabels()]
+
+    assert xticklabels == [
+        r"$\ell=0$",
+        r"$\ell=2$",
+        r"$\ell=0$",
+        r"$\ell=2$",
+        r"$\ell=0$",
+        r"$\ell=2$",
+        r"$\ell=0$",
+        r"$\ell=2$",
+    ]
+    assert yticklabels == xticklabels
+    assert len(fig.axes) >= 1
+
+
 def test_correlation_transform_matrix_has_expected_shape():
     k = np.array([0.05, 0.10, 0.15])
     s = np.array([20.0, 40.0, 60.0, 80.0])

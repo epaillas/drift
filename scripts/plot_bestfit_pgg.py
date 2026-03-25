@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from drift.utils.cosmology import (
     get_cosmology, _DEFAULT_PARAMS, ALL_COSMO_NAMES,
 )
-from drift.io import load_pgg_measurements, diagonal_covariance
+from drift.io import build_diagonal_covariance, load_observable_measurements
 from drift.synthetic import make_synthetic_pgg
 from inference_pgg import (
     SPACE, MODEL_MODE, MEAS_PATH, COV_DIR, ELLS, Z, VARY_COSMO,
@@ -245,7 +245,9 @@ def main():
             idx += nk
         print(f"  True parameters: {TRUE_PARAMS}")
     else:
-        k, poles = load_pgg_measurements(MEAS_PATH, ells=ELLS, rebin=args.rebin, kmin=args.kmin)
+        k, poles = load_observable_measurements(
+            MEAS_PATH, "pgg", ells=ELLS, rebin=args.rebin, kmin=args.kmin
+        )
 
     # Build kmax mask
     kmax_dict = {ell: 0.5 for ell in ELLS}

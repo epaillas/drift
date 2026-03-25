@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from drift.io import load_predictions, load_measurements
+from drift.io import load_observable_measurements, load_predictions
 
 INPUT_PATH = Path(__file__).parents[1] / "outputs" / "dsg_multipoles.npz"
 OUTPUT_DIR = Path(__file__).parents[1] / "outputs"
@@ -25,7 +25,7 @@ def main():
     meas_path = OUTPUT_DIR / "dsg_measured.hdf5"
     measured = None
     if meas_path.exists():
-        k_m, measured = load_measurements(meas_path)
+        k_m, measured = load_observable_measurements(meas_path, "pqg")
 
     labels = sorted(theory.keys())
     colors = plt.cm.RdBu_r(np.linspace(0.1, 0.9, len(labels)))

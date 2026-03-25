@@ -47,18 +47,18 @@ def _args(**overrides):
 def test_resolve_mock_settings_prefers_new_mock_flags(monkeypatch):
     monkeypatch.setattr(
         "scripts.plot_correlation_matrix_pqg._load_mock_k",
-        lambda quantiles, rebin, kmin=0.0, kmax=np.inf: np.array([0.02, 0.04]),
+        lambda quantiles, ells, rebin, kmin=0.0, kmax=np.inf: np.array([0.02, 0.04]),
     )
-    cfg = _resolve_mock_settings(_args(mock_rebin=7, mock_kmin=0.02, mock_kmax=0.3), (1, 5))
+    cfg = _resolve_mock_settings(_args(mock_rebin=7, mock_kmin=0.02, mock_kmax=0.3), (1, 5), (0, 2))
     assert cfg == {"rebin": 7, "kmin": 0.02, "kmax": 0.3}
 
 
 def test_resolve_analytic_settings_uses_reference_dk(monkeypatch):
     monkeypatch.setattr(
         "scripts.plot_correlation_matrix_pqg._load_mock_k",
-        lambda quantiles, rebin, kmin=0.0, kmax=np.inf: np.array([0.02, 0.05, 0.08]),
+        lambda quantiles, ells, rebin, kmin=0.0, kmax=np.inf: np.array([0.02, 0.05, 0.08]),
     )
-    cfg = _resolve_analytic_settings(_args(analytic_cov=True), (1, 5))
+    cfg = _resolve_analytic_settings(_args(analytic_cov=True), (1, 5), (0, 2))
     assert cfg["kmin"] == 0.02
     assert cfg["kmax"] == 0.3
     assert cfg["dk"] == 0.03
@@ -74,7 +74,7 @@ def test_resolve_pqg_covariance_uses_mock_path_by_default(monkeypatch):
         captured["kwargs"] = kwargs
         return np.eye(4)
 
-    monkeypatch.setattr("scripts.plot_correlation_matrix_pqg.mock_covariance_matrix", fake_mock_covariance)
+    monkeypatch.setattr("scripts.plot_correlation_matrix_pqg.estimate_mock_covariance", fake_mock_covariance)
 
     k = np.array([0.05, 0.10])
     flat = np.zeros(8)
@@ -92,12 +92,15 @@ def test_resolve_pqg_covariance_uses_mock_path_by_default(monkeypatch):
         labels,
         fiducials=None,
         mock_cfg=mock_cfg,
+        ells=(0, 2),
     )
 
     assert cov.shape == (4, 4)
     assert precision is None
-    assert captured["statistic"] == "ds"
+    assert captured["statistic"] == "pqg"
+    assert captured["ells"] == (0, 2)
     assert captured["kwargs"]["k_data"] is k
     assert captured["kwargs"]["quantiles"] == quantiles
     assert captured["kwargs"]["kmin"] == 0.02
     assert captured["kwargs"]["kmax"] == 0.3
+    assert captured["kwargs"].get("return_precision", False) is False

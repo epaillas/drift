@@ -45,18 +45,18 @@ def _args(**overrides):
 def test_resolve_mock_settings_prefers_new_mock_flags(monkeypatch):
     monkeypatch.setattr(
         "scripts.plot_correlation_matrix_pqq._load_mock_k",
-        lambda quantiles, rebin, kmin=0.0, kmax=np.inf: np.array([0.02, 0.04]),
+        lambda quantiles, ells, rebin, kmin=0.0, kmax=np.inf: np.array([0.02, 0.04]),
     )
-    cfg = _resolve_mock_settings(_args(mock_rebin=7, mock_kmin=0.02, mock_kmax=0.3), (1, 2))
+    cfg = _resolve_mock_settings(_args(mock_rebin=7, mock_kmin=0.02, mock_kmax=0.3), (1, 2), (0, 2))
     assert cfg == {"rebin": 7, "kmin": 0.02, "kmax": 0.3}
 
 
 def test_resolve_analytic_settings_uses_reference_dk(monkeypatch):
     monkeypatch.setattr(
         "scripts.plot_correlation_matrix_pqq._load_mock_k",
-        lambda quantiles, rebin, kmin=0.0, kmax=np.inf: np.array([0.02, 0.05, 0.08]),
+        lambda quantiles, ells, rebin, kmin=0.0, kmax=np.inf: np.array([0.02, 0.05, 0.08]),
     )
-    cfg = _resolve_analytic_settings(_args(analytic_cov=True), (1, 2))
+    cfg = _resolve_analytic_settings(_args(analytic_cov=True), (1, 2), (0, 2))
     assert cfg["kmin"] == 0.02
     assert cfg["kmax"] == 0.3
     assert cfg["dk"] == 0.03
@@ -72,7 +72,7 @@ def test_resolve_pqq_covariance_uses_mock_path_for_autos_only(monkeypatch):
         captured["kwargs"] = kwargs
         return np.eye(4)
 
-    monkeypatch.setattr("scripts.plot_correlation_matrix_pqq.mock_covariance_matrix", fake_mock_covariance)
+    monkeypatch.setattr("scripts.plot_correlation_matrix_pqq.estimate_mock_covariance", fake_mock_covariance)
 
     k = np.array([0.05, 0.10])
     flat = np.arange(8.0)
@@ -96,14 +96,17 @@ def test_resolve_pqq_covariance_uses_mock_path_for_autos_only(monkeypatch):
         shot_noise,
         poles,
         mock_cfg,
+        (0, 2),
     )
 
     assert cov.shape == (4, 4)
     assert precision is None
     assert captured["statistic"] == "pqq_auto"
+    assert captured["ells"] == (0, 2)
     assert captured["kwargs"]["k_data"] is k
     assert captured["kwargs"]["kmin"] == 0.02
     assert captured["kwargs"]["kmax"] == 0.3
+    assert captured["kwargs"].get("return_precision", False) is False
 
 
 def test_resolve_pqq_covariance_requires_autos_or_analytic_for_default_path():
@@ -130,4 +133,5 @@ def test_resolve_pqq_covariance_requires_autos_or_analytic_for_default_path():
             shot_noise,
             poles,
             {"rebin": 5, "kmin": 0.02, "kmax": 0.3},
+            (0, 2),
         )

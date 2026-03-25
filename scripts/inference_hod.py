@@ -19,7 +19,7 @@ from pocomc import Sampler, Prior
 
 from drift.utils.cosmology import get_cosmology, LinearPowerGrid
 from drift.emulators.density_split import TemplateEmulator
-from drift.io import load_measurements, mock_covariance, taylor_cache_key
+from drift.io import estimate_mock_covariance, load_observable_measurements, make_taylor_cache_key
 from inference_dsg import (
     _build_params, _build_data_mask, _parse_kmax,
     make_eft_theory_model, make_direct_theory_model,
@@ -128,7 +128,9 @@ def main():
 
     # 1. Load measurements
     print(f"Loading measurements from {MEAS_PATH} ...")
-    k, multipoles_per_bin = load_measurements(MEAS_PATH, nquantiles=5, ells=ELLS, rebin=args.rebin)
+    k, multipoles_per_bin = load_observable_measurements(
+        MEAS_PATH, "pqg", nquantiles=5, ells=ELLS, rebin=args.rebin
+    )
     print(f"  k range: [{k.min():.4f}, {k.max():.4f}] h/Mpc  ({len(k)} bins)")
 
     # Build flat data vector
@@ -162,7 +164,7 @@ def main():
     if args.taylor:
         from drift.taylor import TaylorEmulator
         fiducial = {name: 0.5 * (lo + hi) for name, (lo, hi) in zip(PARAM_NAMES, BOUNDS)}
-        cache_hash = taylor_cache_key(
+        cache_hash = make_taylor_cache_key(
             ds_model=DS_MODEL, model_mode=MODEL_MODE, space=SPACE, z=Z,
             ells=ELLS, quantiles=QUANTILES, kmax=str(kmax_dict),
             kmin=args.kmin, rebin=args.rebin,
@@ -227,9 +229,9 @@ def main():
         theory_fn_masked = lambda theta: theory_fn(theta)[mask]
 
     print(f"Estimating covariance from mocks in {COV_DIR} ...")
-    cov, precision_matrix = mock_covariance(
-        COV_DIR, "ds", ELLS, mask=mask, rescale=args.cov_rescale,
-        rebin=args.rebin, nquantiles=5, quantiles=QUANTILES,
+    cov, precision_matrix = estimate_mock_covariance(
+        COV_DIR, "pqg", ELLS, mask=mask, rescale=args.cov_rescale,
+        rebin=args.rebin, nquantiles=5, quantiles=QUANTILES, return_precision=True,
     )
     print(f"  Covariance matrix shape: {cov.shape}")
 

@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from drift.utils.cosmology import get_cosmology
-from drift.io import load_measurements, diagonal_covariance
+from drift.io import build_diagonal_covariance, load_observable_measurements
 from inference_dsg import _parse_kmax, _build_data_mask, make_direct_theory_model
 
 SPACE      = "redshift"         # "redshift" | "real"
@@ -123,7 +123,9 @@ def main():
         print(f"  {name}: {val:.4f}")
 
     # Load measurements
-    k, measured = load_measurements(MEAS_PATH, nquantiles=max(QUANTILES), ells=ELLS, rebin=args.rebin)
+    k, measured = load_observable_measurements(
+        MEAS_PATH, "pqg", nquantiles=max(QUANTILES), ells=ELLS, rebin=args.rebin
+    )
 
     # Build kmax mask
     kmax_dict = _parse_kmax(args.kmax, ELLS)
@@ -134,7 +136,7 @@ def main():
         for q in QUANTILES
         for ell in ELLS
     ])
-    cov_full, _ = diagonal_covariance(data_y, rescale=args.cov_rescale)
+    cov_full, _ = build_diagonal_covariance(data_y, rescale=args.cov_rescale)
     err_full_vec = np.sqrt(np.diag(cov_full))
 
     errors = {}

@@ -29,10 +29,10 @@ from drift.analytic_marginalization import MarginalizedLikelihood
 from drift.covariance import estimate_ssc_sigma_b2
 from drift.io import (
     analytic_pgg_covariance,
-    load_pgg_measurements,
-    mock_covariance,
-    diagonal_covariance,
-    taylor_cache_key,
+    build_diagonal_covariance,
+    estimate_mock_covariance,
+    load_observable_measurements,
+    make_taylor_cache_key,
 )
 from drift.synthetic import make_synthetic_pgg
 
@@ -103,9 +103,9 @@ def _resolve_pgg_covariance(args, k, data_y_masked, mask, fiducial_poles=None):
     rebin = getattr(args, "rebin", 13)
 
     if synthetic and not analytic_cov:
-        return diagonal_covariance(data_y_masked, rescale=cov_rescale)
+        return build_diagonal_covariance(data_y_masked, rescale=cov_rescale)
     if diag_cov:
-        return diagonal_covariance(data_y_masked, rescale=cov_rescale)
+        return build_diagonal_covariance(data_y_masked, rescale=cov_rescale)
     if analytic_cov:
         _validate_analytic_covariance_inputs(args)
         poles = fiducial_poles if fiducial_poles is not None else data_y_masked
@@ -126,9 +126,9 @@ def _resolve_pgg_covariance(args, k, data_y_masked, mask, fiducial_poles=None):
         print(f"Using analytic cubic-box covariance with shape {cov.shape}")
         return cov, precision
     print(f"Estimating covariance from mocks in {COV_DIR} ...")
-    cov, precision = mock_covariance(
+    cov, precision = estimate_mock_covariance(
         COV_DIR, "pgg", ELLS, k_data=k, mask=mask,
-        rescale=cov_rescale, rebin=rebin,
+        rescale=cov_rescale, rebin=rebin, return_precision=True,
     )
     print(f"  Covariance matrix shape: {cov.shape}")
     return cov, precision
@@ -667,7 +667,9 @@ def main():
         print(f"  Data vector length: {len(data_y)}")
     else:
         print(f"Loading measurements from {MEAS_PATH} ...")
-        k, poles = load_pgg_measurements(MEAS_PATH, ells=ELLS, rebin=args.rebin, kmin=args.kmin)
+        k, poles = load_observable_measurements(
+            MEAS_PATH, "pgg", ells=ELLS, rebin=args.rebin, kmin=args.kmin
+        )
         print(f"  k range: [{k.min():.4f}, {k.max():.4f}] h/Mpc  ({len(k)} bins)")
 
         data_y = np.concatenate([poles[ell] for ell in ELLS])
@@ -723,7 +725,7 @@ def main():
         # Taylor emulator over decomposed theory (nonlinear params only)
         from drift.taylor import TaylorEmulator
         fiducial = {name: 0.5 * (lo + hi) for name, (lo, hi) in zip(PARAM_NAMES, BOUNDS)}
-        cache_hash = taylor_cache_key(
+        cache_hash = make_taylor_cache_key(
             model_mode=MODEL_MODE, space=SPACE, z=Z, ells=ELLS,
             kmax=str(kmax_dict), kmin=args.kmin, rebin=args.rebin,
             free_cosmo_names=str(free_cosmo_names),
@@ -780,7 +782,7 @@ def main():
     elif args.taylor:
         from drift.taylor import TaylorEmulator
         fiducial = {name: 0.5 * (lo + hi) for name, (lo, hi) in zip(PARAM_NAMES, BOUNDS)}
-        cache_hash = taylor_cache_key(
+        cache_hash = make_taylor_cache_key(
             model_mode=MODEL_MODE, space=SPACE, z=Z, ells=ELLS,
             kmax=str(kmax_dict), kmin=args.kmin, rebin=args.rebin,
             free_cosmo_names=str(free_cosmo_names),

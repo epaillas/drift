@@ -27,7 +27,12 @@ from drift.emulators.density_split import TemplateEmulator
 from drift.theory.galaxy.power_spectrum import _compute_loop_templates
 from drift.analytic_marginalization import MarginalizedLikelihood
 from drift.covariance import estimate_ssc_sigma_b2
-from drift.io import analytic_pqg_covariance, load_measurements, diagonal_covariance, taylor_cache_key
+from drift.io import (
+    analytic_pqg_covariance,
+    build_diagonal_covariance,
+    load_observable_measurements,
+    make_taylor_cache_key,
+)
 from drift.synthetic import make_synthetic_dsg
 from drift.theory.density_split.config import load_config
 from drift.theory.density_split.power_spectrum import pqq_mu, pqg_mu
@@ -284,7 +289,7 @@ def _default_ds_cross_shot_noise(labels, cross_shot):
     return {label: float(cross_shot) for label in labels}
 
 
-def _build_analytic_dsg_fiducials(args, k, quantiles):
+def _build_analytic_dsg_fiducials(args, k, quantiles, ells=ELLS):
     """Build fixed fiducial P_qg, P_qq, and P_gg multipoles for DSG covariance."""
     cfg = load_config(getattr(args, "cov_config", CONFIG_PATH))
     if cfg.tracer_bias is None:
@@ -324,7 +329,7 @@ def _build_analytic_dsg_fiducials(args, k, quantiles):
                 ds_model=DS_MODEL,
             )
 
-        pqg_poles[label] = compute_multipoles(k, qg_model, ells=ELLS)
+        pqg_poles[label] = compute_multipoles(k, qg_model, ells=ells)
 
     pqq_poles = {}
     for label_a, label_b in itertools.combinations_with_replacement(labels, 2):
@@ -345,12 +350,12 @@ def _build_analytic_dsg_fiducials(args, k, quantiles):
                 ds_model=DS_MODEL,
             )
 
-        pqq_poles[(label_a, label_b)] = compute_multipoles(k, qq_model, ells=ELLS)
+        pqq_poles[(label_a, label_b)] = compute_multipoles(k, qq_model, ells=ells)
 
     def gg_model(kk, mu):
         return galaxy_pkmu(kk, mu, cfg.z, cosmo, cfg.tracer_bias, space=SPACE)
 
-    pgg_poles = compute_multipoles(k, gg_model, ells=ELLS)
+    pgg_poles = compute_multipoles(k, gg_model, ells=ells)
     return {
         "pqg_poles": pqg_poles,
         "pqq_poles": pqq_poles,
@@ -367,11 +372,11 @@ def _resolve_dsg_covariance(args, k, data_y_masked, mask, quantiles, fiducial_bl
     cov_rescale = getattr(args, "cov_rescale", 1.0)
 
     if synthetic and not analytic_cov:
-        return diagonal_covariance(data_y_masked, rescale=cov_rescale)
+        return build_diagonal_covariance(data_y_masked, rescale=cov_rescale)
     if diag_cov:
-        return diagonal_covariance(data_y_masked, rescale=cov_rescale)
+        return build_diagonal_covariance(data_y_masked, rescale=cov_rescale)
     if not analytic_cov:
-        return diagonal_covariance(data_y_masked, rescale=cov_rescale)
+        return build_diagonal_covariance(data_y_masked, rescale=cov_rescale)
 
     _validate_analytic_covariance_inputs(args)
     fiducials = fiducial_blocks if fiducial_blocks is not None else _build_analytic_dsg_fiducials(
@@ -1022,8 +1027,8 @@ def main():
         print(f"  Data vector length: {len(data_y)}")
     else:
         print(f"Loading measurements from {MEAS_PATH} ...")
-        k, multipoles_per_bin = load_measurements(
-            MEAS_PATH, nquantiles=max(QUANTILES), ells=ELLS, rebin=args.rebin,
+        k, multipoles_per_bin = load_observable_measurements(
+            MEAS_PATH, "pqg", nquantiles=max(QUANTILES), ells=ELLS, rebin=args.rebin,
         )
         print(f"  k range: [{k.min():.4f}, {k.max():.4f}] h/Mpc  ({len(k)} bins)")
         data_y = np.concatenate([
@@ -1090,7 +1095,7 @@ def main():
     if args.taylor and use_marg:
         from drift.taylor import TaylorEmulator
         fiducial = {name: 0.5 * (lo + hi) for name, (lo, hi) in zip(PARAM_NAMES, BOUNDS)}
-        cache_hash = taylor_cache_key(
+        cache_hash = make_taylor_cache_key(
             ds_model=DS_MODEL, model_mode=model_mode, space=SPACE, z=Z,
             ells=ELLS, quantiles=QUANTILES, kmax=str(kmax_dict),
             kmin=args.kmin, rebin=args.rebin,
@@ -1147,7 +1152,7 @@ def main():
     elif args.taylor:
         from drift.taylor import TaylorEmulator
         fiducial = {name: 0.5 * (lo + hi) for name, (lo, hi) in zip(PARAM_NAMES, BOUNDS)}
-        cache_hash = taylor_cache_key(
+        cache_hash = make_taylor_cache_key(
             ds_model=DS_MODEL, model_mode=model_mode, space=SPACE, z=Z,
             ells=ELLS, quantiles=QUANTILES, kmax=str(kmax_dict),
             kmin=args.kmin, rebin=args.rebin,

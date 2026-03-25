@@ -14,13 +14,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from drift.covariance import estimate_ssc_sigma_b2, plot_correlation_matrix
 from drift.io import (
     analytic_pgg_covariance,
-    diagonal_covariance,
-    load_pgg_measurements,
-    mock_covariance_matrix,
+    build_diagonal_covariance,
+    estimate_mock_covariance,
+    load_observable_measurements,
 )
-from inference_pgg import ELLS, MEAS_PATH, MODEL_MODE, OUTPUT_DIR, SPACE
+from inference_pgg import MEAS_PATH, MODEL_MODE, OUTPUT_DIR, SPACE
 
 COV_DIR = Path(__file__).parents[1] / "outputs" / "hods" / "for_covariance"
+DEFAULT_ELLS = (0, 2, 4)
 DEFAULT_EFFECTIVE_CNG_AMPLITUDE = 0.2
 LEGACY_DEFAULT_KMAX = 0.5
 DEFAULT_ANALYTIC_KMAX = 0.3
@@ -53,6 +54,17 @@ def _parse_legacy_kmax(values):
     raise ValueError("Per-ell legacy --kmax is not supported; use a single scalar cut.")
 
 
+def _parse_ells(values):
+    if values is None:
+        return DEFAULT_ELLS
+    ells = tuple(int(value) for value in values)
+    if not ells:
+        raise ValueError("--ells must contain at least one multipole.")
+    if len(set(ells)) != len(ells):
+        raise ValueError("--ells must not contain duplicates.")
+    return ells
+
+
 def _warn_legacy(old_flag, new_flag):
     warnings.warn(
         f"{old_flag} is deprecated; use {new_flag} instead.",
@@ -61,8 +73,10 @@ def _warn_legacy(old_flag, new_flag):
     )
 
 
-def _infer_default_analytic_dk():
-    k_ref, _ = load_pgg_measurements(MEAS_PATH, ells=ELLS, rebin=DEFAULT_REFERENCE_REBIN, kmin=0.0)
+def _infer_default_analytic_dk(ells):
+    k_ref, _ = load_observable_measurements(
+        MEAS_PATH, "pgg", ells=ells, rebin=DEFAULT_REFERENCE_REBIN, kmin=0.0
+    )
     diffs = np.diff(k_ref)
     if diffs.size == 0:
         raise ValueError("Cannot infer analytic dk from a single measurement k bin.")
@@ -81,7 +95,7 @@ def _build_linear_k_grid(kmin, kmax, dk):
     return grid
 
 
-def _resolve_mock_settings(args):
+def _resolve_mock_settings(args, ells):
     rebin = args.mock_rebin
     kmin = args.mock_kmin
     kmax = args.mock_kmax
@@ -98,15 +112,17 @@ def _resolve_mock_settings(args):
             kmax = _parse_legacy_kmax(args.kmax)
 
     if kmin is None:
-        k0, _ = load_pgg_measurements(MEAS_PATH, ells=ELLS, rebin=rebin, kmin=0.0)
+        k0, _ = load_observable_measurements(MEAS_PATH, "pgg", ells=ells, rebin=rebin, kmin=0.0)
         kmin = float(k0.min())
     if kmax is None:
         kmax = np.inf
     return {"rebin": rebin, "kmin": float(kmin), "kmax": float(kmax)}
 
 
-def _resolve_analytic_settings(args):
-    k_ref, _ = load_pgg_measurements(MEAS_PATH, ells=ELLS, rebin=DEFAULT_REFERENCE_REBIN, kmin=0.0)
+def _resolve_analytic_settings(args, ells):
+    k_ref, _ = load_observable_measurements(
+        MEAS_PATH, "pgg", ells=ells, rebin=DEFAULT_REFERENCE_REBIN, kmin=0.0
+    )
     kmin = args.analytic_kmin
     kmax = args.analytic_kmax
     dk = args.analytic_dk
@@ -131,7 +147,7 @@ def _resolve_analytic_settings(args):
     if kmax is None:
         kmax = DEFAULT_ANALYTIC_KMAX
     if dk is None:
-        dk = _infer_default_analytic_dk()
+        dk = _infer_default_analytic_dk(ells)
 
     return {
         "kmin": float(kmin),
@@ -141,11 +157,13 @@ def _resolve_analytic_settings(args):
     }
 
 
-def _interpolate_measurement_poles(k_target):
-    k_src, poles_src = load_pgg_measurements(MEAS_PATH, ells=ELLS, rebin=DEFAULT_REFERENCE_REBIN, kmin=0.0)
+def _interpolate_measurement_poles(k_target, ells):
+    k_src, poles_src = load_observable_measurements(
+        MEAS_PATH, "pgg", ells=ells, rebin=DEFAULT_REFERENCE_REBIN, kmin=0.0
+    )
     return {
         ell: np.interp(k_target, k_src, poles_src[ell])
-        for ell in ELLS
+        for ell in ells
     }
 
 
@@ -157,14 +175,14 @@ def _covariance_source_label(args):
     return "mock"
 
 
-def _print_covariance_summary(args, k, block_sizes, binning_summary):
+def _print_covariance_summary(args, k, block_sizes, binning_summary, ells):
     source = _covariance_source_label(args)
     print("Preparing P_gg correlation matrix")
     print(f"  covariance source: {source}")
     print(f"  measurement file: {MEAS_PATH}")
-    print(f"  ells: {ELLS}")
+    print(f"  ells: {ells}")
     print(f"  nk: {len(k)}")
-    print(f"  retained bins per ell: {dict(zip(ELLS, block_sizes))}")
+    print(f"  retained bins per ell: {dict(zip(ells, block_sizes))}")
     print(f"  covariance rescale: {args.cov_rescale}")
     for line in binning_summary:
         print(f"  {line}")
@@ -184,6 +202,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mock-rebin", type=int, default=13, metavar="N",
                         help="Rebin factor used when loading the mock or measurement P_gg multipoles.")
+    parser.add_argument("--ells", nargs="+", type=int, default=None, metavar="ELL",
+                        help="Multipoles to plot, for example --ells 0 2 4.")
     parser.add_argument("--mock-kmin", type=float, default=None, metavar="VALUE",
                         help="Minimum k retained on the mock covariance path, in h/Mpc.")
     parser.add_argument("--mock-kmax", type=float, default=None, metavar="VALUE",
@@ -219,15 +239,16 @@ def main():
     parser.add_argument("--ssc-sigma-b2", type=float, default=None, metavar="VAR",
                         help="Long-mode density variance used by the SSC term on the analytic covariance path.")
     args = parser.parse_args()
+    ells = _parse_ells(args.ells)
 
-    mock_cfg = _resolve_mock_settings(args)
+    mock_cfg = _resolve_mock_settings(args, ells)
     if args.analytic_cov or args.diag_cov:
-        analytic_cfg = _resolve_analytic_settings(args)
+        analytic_cfg = _resolve_analytic_settings(args, ells)
         k = analytic_cfg["k"]
-        poles = _interpolate_measurement_poles(k)
-        flat = np.concatenate([poles[ell] for ell in ELLS])
-        full_mask = np.ones(len(ELLS) * len(k), dtype=bool)
-        block_sizes = [len(k)] * len(ELLS)
+        poles = _interpolate_measurement_poles(k, ells)
+        flat = np.concatenate([poles[ell] for ell in ells])
+        full_mask = np.ones(len(ells) * len(k), dtype=bool)
+        block_sizes = [len(k)] * len(ells)
         binning_summary = [
             "binning source: analytic grid",
             f"analytic kmin: {analytic_cfg['kmin']}",
@@ -236,12 +257,12 @@ def main():
             f"analytic nk: {len(k)}",
         ]
     else:
-        k, poles = load_pgg_measurements(
-            MEAS_PATH, ells=ELLS, rebin=mock_cfg["rebin"], kmin=mock_cfg["kmin"], kmax=mock_cfg["kmax"]
+        k, poles = load_observable_measurements(
+            MEAS_PATH, "pgg", ells=ells, rebin=mock_cfg["rebin"], kmin=mock_cfg["kmin"], kmax=mock_cfg["kmax"]
         )
-        flat = np.concatenate([poles[ell] for ell in ELLS])
-        full_mask = np.ones(len(ELLS) * len(k), dtype=bool)
-        block_sizes = [len(k)] * len(ELLS)
+        flat = np.concatenate([poles[ell] for ell in ells])
+        full_mask = np.ones(len(ells) * len(k), dtype=bool)
+        block_sizes = [len(k)] * len(ells)
         binning_summary = [
             "binning source: mock/measurement I/O",
             f"mock rebin: {mock_cfg['rebin']}",
@@ -249,15 +270,15 @@ def main():
             f"mock kmax: {mock_cfg['kmax']}",
         ]
 
-    _print_covariance_summary(args, k, block_sizes, binning_summary)
+    _print_covariance_summary(args, k, block_sizes, binning_summary, ells)
 
     if args.diag_cov:
-        cov, _ = diagonal_covariance(flat[full_mask], rescale=args.cov_rescale)
+        cov, _ = build_diagonal_covariance(flat[full_mask], rescale=args.cov_rescale)
     elif args.analytic_cov:
         cov, _ = analytic_pgg_covariance(
             k,
-            {ell: flat[i * len(k):(i + 1) * len(k)] for i, ell in enumerate(ELLS)},
-            ELLS,
+            {ell: flat[i * len(k):(i + 1) * len(k)] for i, ell in enumerate(ells)},
+            ells,
             volume=args.box_volume,
             number_density=args.number_density,
             shot_noise=args.shot_noise,
@@ -269,10 +290,10 @@ def main():
             ssc_sigma_b2=_resolve_ssc_sigma_b2(args),
         )
     else:
-        cov = mock_covariance_matrix(
+        cov = estimate_mock_covariance(
             COV_DIR,
             "pgg",
-            ELLS,
+            ells,
             k_data=k,
             mask=full_mask,
             rescale=args.cov_rescale,
@@ -284,7 +305,7 @@ def main():
 
     fig, ax = plot_correlation_matrix(
         cov,
-        ells=ELLS,
+        ells=ells,
         block_sizes=block_sizes,
         cmap="RdBu_r",
         title=rf"$P_{{gg}}$ correlation ({SPACE}, {MODEL_MODE})",

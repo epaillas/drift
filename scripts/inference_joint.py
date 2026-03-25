@@ -28,7 +28,11 @@ from drift.utils.cosmology import (
     get_cosmology,
 )
 from drift.emulators.galaxy import GalaxyTemplateEmulator
-from drift.io import diagonal_covariance, load_pgg_measurements, load_measurements, mock_covariance, taylor_cache_key
+from drift.io import (
+    build_diagonal_covariance,
+    load_observable_measurements,
+    make_taylor_cache_key,
+)
 from drift.synthetic import make_synthetic_dsg, make_synthetic_pgg
 from scripts.inference_dsg import (
     DS_MODEL,
@@ -603,11 +607,13 @@ def main():
         )
     else:
         print(f"Loading P_gg measurements from {PGG_MEAS_PATH} ...")
-        k_pgg, poles_pgg = load_pgg_measurements(PGG_MEAS_PATH, ells=PGG_ELLS, rebin=args.rebin, kmin=args.kmin)
+        k_pgg, poles_pgg = load_observable_measurements(
+            PGG_MEAS_PATH, "pgg", ells=PGG_ELLS, rebin=args.rebin, kmin=args.kmin
+        )
         data_pgg = np.concatenate([poles_pgg[ell] for ell in PGG_ELLS])
         print(f"Loading DS×g measurements from {DSG_MEAS_PATH} ...")
-        k_dsg, multipoles_per_bin = load_measurements(
-            DSG_MEAS_PATH, nquantiles=max(QUANTILES), ells=DSG_ELLS, rebin=args.rebin,
+        k_dsg, multipoles_per_bin = load_observable_measurements(
+            DSG_MEAS_PATH, "pqg", nquantiles=max(QUANTILES), ells=DSG_ELLS, rebin=args.rebin,
         )
         data_dsg = np.concatenate([
             multipoles_per_bin[f"DS{q}"][ell]
@@ -677,7 +683,7 @@ def main():
         from drift.taylor import TaylorEmulator
 
         fiducial = {name: 0.5 * (lo + hi) for name, (lo, hi) in zip(param_names, bounds)}
-        cache_hash = taylor_cache_key(
+        cache_hash = make_taylor_cache_key(
             model_mode=model_mode, ds_model=DS_MODEL, space=SPACE, z=Z,
             pgg_ells=PGG_ELLS, dsg_ells=DSG_ELLS, quantiles=QUANTILES,
             kmax=str(kmax_dict), kmin=args.kmin, rebin=args.rebin,
@@ -766,11 +772,11 @@ def main():
                 return np.concatenate([pred[:n_pgg][pgg_mask], pred[n_pgg:][dsg_mask]])
 
     if args.synthetic and not args.analytic_cov:
-        cov_pgg, precision_pgg = diagonal_covariance(data_pgg_masked, rescale=args.cov_rescale)
-        cov_dsg, precision_dsg = diagonal_covariance(data_dsg_masked, rescale=args.cov_rescale)
+        cov_pgg, precision_pgg = build_diagonal_covariance(data_pgg_masked, rescale=args.cov_rescale)
+        cov_dsg, precision_dsg = build_diagonal_covariance(data_dsg_masked, rescale=args.cov_rescale)
     elif args.diag_cov:
-        cov_pgg, precision_pgg = diagonal_covariance(data_pgg_masked, rescale=args.cov_rescale)
-        cov_dsg, precision_dsg = diagonal_covariance(data_dsg_masked, rescale=args.cov_rescale)
+        cov_pgg, precision_pgg = build_diagonal_covariance(data_pgg_masked, rescale=args.cov_rescale)
+        cov_dsg, precision_dsg = build_diagonal_covariance(data_dsg_masked, rescale=args.cov_rescale)
     else:
         fiducial_poles_pgg = (
             {ell: poles_pgg[ell] for ell in PGG_ELLS}
@@ -779,7 +785,7 @@ def main():
         cov_pgg, precision_pgg = _resolve_pgg_covariance(
             args, k_pgg, data_pgg_masked, pgg_mask, fiducial_poles=fiducial_poles_pgg,
         )
-        cov_dsg, precision_dsg = diagonal_covariance(data_dsg_masked, rescale=args.cov_rescale)
+        cov_dsg, precision_dsg = build_diagonal_covariance(data_dsg_masked, rescale=args.cov_rescale)
     cov, precision_matrix = _combine_block_covariances(cov_pgg, precision_pgg, cov_dsg, precision_dsg)
 
     if args.synthetic:

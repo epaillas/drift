@@ -71,22 +71,22 @@ def test_apply_reciprocal_analytic_k_limits_only_fills_missing_values():
 
 def test_resolve_analytic_settings_can_use_implied_k_limits(monkeypatch):
     monkeypatch.setattr(
-        "scripts.plot_correlation_matrix_pgg.load_pgg_measurements",
-        lambda path, ells, rebin, kmin=0.0, kmax=np.inf: (
+        "scripts.plot_correlation_matrix_pgg.load_observable_measurements",
+        lambda path, observable, ells, rebin, kmin=0.0, kmax=np.inf: (
             np.array([0.01, 0.03, 0.05, 0.07]),
             {0: np.ones(4), 2: np.ones(4), 4: np.ones(4)},
         ),
     )
     args = _args(analytic_cov=True, analytic_kmin=None, analytic_kmax=None, analytic_dk=None, smin=20.0, smax=200.0)
     args.analytic_kmin, args.analytic_kmax = apply_reciprocal_analytic_k_limits(args)
-    cfg = _resolve_analytic_settings(args)
+    cfg = _resolve_analytic_settings(args, (0, 2, 4))
     assert np.isclose(cfg["kmin"], 0.0035)
     assert np.isclose(cfg["kmax"], 0.15)
 
 
 def test_resolve_xigg_covariance_propagates_mock_covariance(monkeypatch):
     monkeypatch.setattr(
-        "scripts.plot_correlation_matrix_xigg.mock_covariance_matrix",
+        "scripts.plot_correlation_matrix_xigg.estimate_mock_covariance",
         lambda *args, **kwargs: np.eye(6),
     )
 
@@ -102,6 +102,7 @@ def test_resolve_xigg_covariance_propagates_mock_covariance(monkeypatch):
         mask,
         poles=None,
         mock_cfg={"rebin": 13, "kmin": 0.02, "kmax": 0.3},
+        ells=(0, 2, 4),
     )
 
     assert cov.shape == (6, 6)

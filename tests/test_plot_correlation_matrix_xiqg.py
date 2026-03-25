@@ -17,6 +17,7 @@ def _args(**overrides):
         diag_cov=False,
         analytic_cov=False,
         cov_rescale=64.0,
+        mock_rebin=1,
         box_volume=1.0e9,
         galaxy_shot_noise=400.0,
         ds_pair_auto_shot_noise=250.0,
@@ -32,12 +33,21 @@ def _args(**overrides):
 
 
 def test_resolve_xiqg_covariance_propagates_mock_covariance(monkeypatch):
+    captured = {}
+
+    def fake_mock_covariance(mock_dir, statistic, ells, **kwargs):
+        captured["mock_dir"] = mock_dir
+        captured["statistic"] = statistic
+        captured["ells"] = ells
+        captured["kwargs"] = kwargs
+        return np.eye(12)
+
     monkeypatch.setattr(
-        "scripts.plot_correlation_matrix_xiqg.mock_covariance_matrix",
-        lambda *args, **kwargs: np.eye(8),
+        "scripts.plot_correlation_matrix_xiqg.estimate_mock_covariance",
+        fake_mock_covariance,
     )
 
-    k = np.array([0.05, 0.10])
+    k = np.array([0.05, 0.10, 0.15])
     s = np.array([20.0, 40.0])
     flat = np.zeros(8)
     mask = np.ones(8, dtype=bool)
@@ -52,8 +62,17 @@ def test_resolve_xiqg_covariance_propagates_mock_covariance(monkeypatch):
         quantiles,
         labels,
         fiducials=None,
-        mock_cfg={"rebin": 5, "kmin": 0.02, "kmax": 0.3},
+        mock_cfg={"rebin": 1, "smin": 20.0, "smax": 40.0},
+        ells=(0, 2),
     )
 
-    assert cov.shape == (8, 8)
+    assert cov.shape == (12, 12)
     assert precision is None
+    assert captured["statistic"] == "xiqg"
+    assert captured["ells"] == (0, 2)
+    assert captured["kwargs"]["s_data"] is s
+    assert captured["kwargs"]["rebin"] == 1
+    assert captured["kwargs"]["quantiles"] == quantiles
+    assert captured["kwargs"]["smin"] == 20.0
+    assert captured["kwargs"]["smax"] == 40.0
+    assert captured["kwargs"].get("return_precision", False) is False

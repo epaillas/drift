@@ -16,12 +16,13 @@ from drift.covariance import (
     plot_correlation_matrix,
     propagate_covariance_to_correlation,
 )
-from drift.io import diagonal_covariance, mock_covariance_matrix
+from drift.io import build_diagonal_covariance, estimate_mock_covariance
 from plot_correlation_matrix_pgg import (
     COV_DIR,
-    ELLS,
+    DEFAULT_ELLS,
     MEAS_PATH,
     OUTPUT_DIR,
+    _parse_ells,
     _covariance_source_label,
     _interpolate_measurement_poles,
     _print_covariance_summary as _print_pgg_covariance_summary,
@@ -29,32 +30,32 @@ from plot_correlation_matrix_pgg import (
     _resolve_cng_amplitude,
     _resolve_mock_settings,
     _resolve_ssc_sigma_b2,
-    load_pgg_measurements,
+    load_observable_measurements,
 )
 from plot_correlation_matrix_xi_common import apply_reciprocal_analytic_k_limits, build_s_grid
 
 
-def _print_covariance_summary(args, k, s, block_sizes, binning_summary):
-    _print_pgg_covariance_summary(args, k, block_sizes, binning_summary)
+def _print_covariance_summary(args, k, s, block_sizes, binning_summary, ells):
+    _print_pgg_covariance_summary(args, k, block_sizes, binning_summary, ells)
     print(f"  ns: {len(s)}")
     print(f"  smin: {float(s.min())}")
     print(f"  smax: {float(s.max())}")
 
 
-def _resolve_xigg_covariance(args, k, s, flat, full_mask, poles, mock_cfg):
+def _resolve_xigg_covariance(args, k, s, flat, full_mask, poles, mock_cfg, ells):
     if args.diag_cov and args.analytic_cov:
         raise ValueError("Choose at most one of --diag-cov and --analytic-cov.")
 
     if args.diag_cov:
-        cov_k, _ = diagonal_covariance(flat[full_mask], rescale=args.cov_rescale)
-        return propagate_covariance_to_correlation(cov_k, k, s, ells=ELLS), None
+        cov_k, _ = build_diagonal_covariance(flat[full_mask], rescale=args.cov_rescale)
+        return propagate_covariance_to_correlation(cov_k, k, s, ells=ells), None
 
     if args.analytic_cov:
         return analytic_xigg_covariance(
             k,
             s,
             poles,
-            ells=ELLS,
+            ells=ells,
             volume=args.box_volume,
             number_density=args.number_density,
             shot_noise=args.shot_noise,
@@ -65,10 +66,10 @@ def _resolve_xigg_covariance(args, k, s, flat, full_mask, poles, mock_cfg):
             ssc_sigma_b2=_resolve_ssc_sigma_b2(args),
         )
 
-    cov_k = mock_covariance_matrix(
+    cov_k = estimate_mock_covariance(
         COV_DIR,
-        "pk",
-        ELLS,
+        "pgg",
+        ells,
         k_data=k,
         mask=full_mask,
         rescale=args.cov_rescale,
@@ -76,11 +77,13 @@ def _resolve_xigg_covariance(args, k, s, flat, full_mask, poles, mock_cfg):
         kmin=mock_cfg["kmin"],
         kmax=mock_cfg["kmax"],
     )
-    return propagate_covariance_to_correlation(cov_k, k, s, ells=ELLS), None
+    return propagate_covariance_to_correlation(cov_k, k, s, ells=ells), None
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--ells", nargs="+", type=int, default=None, metavar="ELL",
+                        help="Multipoles to plot, for example --ells 0 2 4.")
     parser.add_argument("--mock-rebin", type=int, default=13, metavar="N",
                         help="Rebin factor used when loading the mock or measurement P_gg multipoles that seed the xi_gg covariance.")
     parser.add_argument("--mock-kmin", type=float, default=None, metavar="VALUE",
@@ -126,19 +129,20 @@ def main():
     parser.add_argument("--ssc-sigma-b2", type=float, default=None, metavar="VAR",
                         help="Long-mode density variance used by the SSC term on the analytic covariance path.")
     args = parser.parse_args()
+    ells = _parse_ells(args.ells)
 
-    mock_cfg = _resolve_mock_settings(args)
+    mock_cfg = _resolve_mock_settings(args, ells)
     if args.analytic_cov or args.diag_cov:
         implied_kmin, implied_kmax = apply_reciprocal_analytic_k_limits(args)
         if args.analytic_kmin is None:
             args.analytic_kmin = implied_kmin
         if args.analytic_kmax is None:
             args.analytic_kmax = implied_kmax
-        analytic_cfg = _resolve_analytic_settings(args)
+        analytic_cfg = _resolve_analytic_settings(args, ells)
         k = analytic_cfg["k"]
-        poles = _interpolate_measurement_poles(k)
-        flat = np.concatenate([poles[ell] for ell in ELLS])
-        full_mask = np.ones(len(ELLS) * len(k), dtype=bool)
+        poles = _interpolate_measurement_poles(k, ells)
+        flat = np.concatenate([poles[ell] for ell in ells])
+        full_mask = np.ones(len(ells) * len(k), dtype=bool)
         binning_summary = [
             "binning source: analytic grid",
             f"analytic kmin: {analytic_cfg['kmin']}",
@@ -147,12 +151,12 @@ def main():
             f"analytic nk: {len(k)}",
         ]
     else:
-        k, _ = load_pgg_measurements(
-            MEAS_PATH, ells=ELLS, rebin=mock_cfg["rebin"], kmin=mock_cfg["kmin"], kmax=mock_cfg["kmax"]
+        k, _ = load_observable_measurements(
+            MEAS_PATH, "pgg", ells=ells, rebin=mock_cfg["rebin"], kmin=mock_cfg["kmin"], kmax=mock_cfg["kmax"]
         )
         poles = None
-        flat = np.zeros(len(ELLS) * len(k), dtype=float)
-        full_mask = np.ones(len(ELLS) * len(k), dtype=bool)
+        flat = np.zeros(len(ells) * len(k), dtype=float)
+        full_mask = np.ones(len(ells) * len(k), dtype=bool)
         binning_summary = [
             "binning source: mock/measurement I/O",
             f"mock rebin: {mock_cfg['rebin']}",
@@ -161,14 +165,15 @@ def main():
         ]
 
     s = build_s_grid(k, smin=args.smin, smax=args.smax, ds=args.ds, ns=args.ns)
-    block_sizes = [len(s)] * len(ELLS)
-    _print_covariance_summary(args, k, s, block_sizes, binning_summary)
+    block_sizes = [len(s)] * len(ells)
+    _print_covariance_summary(args, k, s, block_sizes, binning_summary, ells)
 
-    cov, _ = _resolve_xigg_covariance(args, k, s, flat, full_mask, poles, mock_cfg)
+    cov, _ = _resolve_xigg_covariance(args, k, s, flat, full_mask, poles, mock_cfg, ells)
     print(f"  covariance matrix shape: {cov.shape}")
 
     fig, _ = plot_correlation_matrix(
         cov,
+        ells=ells,
         block_sizes=block_sizes,
         cmap="RdBu_r",
         title=r"$\xi_{gg}$ correlation",

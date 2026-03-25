@@ -32,20 +32,20 @@ def _args(**overrides):
 
 
 def test_resolve_mock_settings_uses_new_mock_flags():
-    cfg = _resolve_mock_settings(_args(mock_rebin=7, mock_kmin=0.02, mock_kmax=0.3))
+    cfg = _resolve_mock_settings(_args(mock_rebin=7, mock_kmin=0.02, mock_kmax=0.3), (0, 2, 4))
     assert cfg == {"rebin": 7, "kmin": 0.02, "kmax": 0.3}
 
 
 def test_resolve_analytic_settings_uses_default_dk(monkeypatch):
     monkeypatch.setattr(
-        "scripts.plot_correlation_matrix_pgg.load_pgg_measurements",
-        lambda path, ells, rebin, kmin=0.0, kmax=np.inf: (
+        "scripts.plot_correlation_matrix_pgg.load_observable_measurements",
+        lambda path, observable, ells, rebin, kmin=0.0, kmax=np.inf: (
             np.array([0.01, 0.03, 0.05, 0.07]),
             {0: np.ones(4), 2: np.ones(4), 4: np.ones(4)},
         ),
     )
 
-    cfg = _resolve_analytic_settings(_args(analytic_cov=True))
+    cfg = _resolve_analytic_settings(_args(analytic_cov=True), (0, 2, 4))
 
     assert cfg["kmin"] == 0.01
     assert cfg["kmax"] == 0.3

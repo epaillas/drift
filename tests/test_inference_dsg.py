@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from drift.analytic_marginalization import MarginalizedLikelihood
 from drift.utils.cosmology import get_cosmology
-from drift.io import diagonal_covariance
+from drift.io import build_diagonal_covariance
 from drift.synthetic import make_synthetic_dsg
 from scripts.inference_dsg import (
     DS_MODEL,
@@ -110,7 +110,7 @@ def test_marginalized_eft_ct_recovers_linear_truth(cosmo, k):
 
     np.testing.assert_allclose(m + T @ alpha_truth, data_y, rtol=1e-10)
 
-    _, precision = diagonal_covariance(data_y, rescale=64.0)
+    _, precision = build_diagonal_covariance(data_y, rescale=64.0)
     prior_sigmas = np.array([50.0] + [4.0] * len(QUANTILES))
     marg_like = MarginalizedLikelihood(data_y, precision, prior_sigmas)
     recovered = marg_like.bestfit_linear_params(m, T)

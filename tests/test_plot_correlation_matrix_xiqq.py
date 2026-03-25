@@ -31,7 +31,7 @@ def _args(**overrides):
 
 def test_resolve_xiqq_covariance_propagates_mock_covariance(monkeypatch):
     monkeypatch.setattr(
-        "scripts.plot_correlation_matrix_xiqq.mock_covariance_matrix",
+        "scripts.plot_correlation_matrix_xiqq.estimate_mock_covariance",
         lambda *args, **kwargs: np.eye(8),
     )
 
@@ -52,6 +52,7 @@ def test_resolve_xiqq_covariance_propagates_mock_covariance(monkeypatch):
         shot_noise={("DS1", "DS1"): 1.0, ("DS3", "DS3"): 1.0},
         fiducial_poles={},
         mock_cfg={"rebin": 5, "kmin": 0.02, "kmax": 0.3},
+        ells=(0, 2),
     )
 
     assert cov.shape == (8, 8)
@@ -78,4 +79,5 @@ def test_resolve_xiqq_covariance_requires_autos_for_mock_path():
             shot_noise={("DS1", "DS1"): 1.0, ("DS1", "DS2"): 1.0, ("DS2", "DS2"): 1.0},
             fiducial_poles={},
             mock_cfg={"rebin": 5, "kmin": 0.02, "kmax": 0.3},
+            ells=(0, 2),
         )

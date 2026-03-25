@@ -15,9 +15,9 @@ from drift.covariance import estimate_ssc_sigma_b2
 from drift.covariance import plot_correlation_matrix
 from drift.io import (
     analytic_pqq_covariance,
-    diagonal_covariance,
-    load_measurements,
-    mock_covariance_matrix,
+    build_diagonal_covariance,
+    estimate_mock_covariance,
+    load_observable_measurements,
 )
 from drift.theory.density_split.config import load_config
 from drift.theory.density_split.power_spectrum import pqq_mu
@@ -27,7 +27,7 @@ from drift.utils.multipoles import compute_multipoles
 CONFIG_PATH = Path(__file__).parents[1] / "configs" / "example.yaml"
 OUTPUT_DIR = Path(__file__).parents[1] / "outputs"
 COV_DIR = Path(__file__).parents[1] / "outputs" / "hods" / "for_covariance"
-ELLS = (0, 2)
+DEFAULT_ELLS = (0, 2)
 DEFAULT_EFFECTIVE_CNG_AMPLITUDE = 0.2
 LEGACY_DEFAULT_KMAX = 0.3
 DEFAULT_ANALYTIC_KMAX = 0.3
@@ -58,6 +58,17 @@ def _parse_quantiles(values):
     return tuple(int(value) for value in values)
 
 
+def _parse_ells(values):
+    if values is None:
+        return DEFAULT_ELLS
+    ells = tuple(int(value) for value in values)
+    if not ells:
+        raise ValueError("--ells must contain at least one multipole.")
+    if len(set(ells)) != len(ells):
+        raise ValueError("--ells must not contain duplicates.")
+    return ells
+
+
 def _parse_legacy_kmax(values):
     if values is None:
         return None
@@ -81,11 +92,12 @@ def _representative_mock_path():
     return mock_path
 
 
-def _load_mock_k(quantiles, rebin, kmin=0.0, kmax=np.inf):
-    k, _ = load_measurements(
+def _load_mock_k(quantiles, ells, rebin, kmin=0.0, kmax=np.inf):
+    k, _ = load_observable_measurements(
         _representative_mock_path(),
+        "pqg",
         nquantiles=max(quantiles),
-        ells=ELLS,
+        ells=ells,
         rebin=rebin,
         kmin=kmin,
         kmax=kmax,
@@ -96,8 +108,8 @@ def _load_mock_k(quantiles, rebin, kmin=0.0, kmax=np.inf):
     return positive
 
 
-def _infer_default_analytic_dk(quantiles):
-    k_ref = _load_mock_k(quantiles, DEFAULT_REFERENCE_REBIN)
+def _infer_default_analytic_dk(quantiles, ells):
+    k_ref = _load_mock_k(quantiles, ells, DEFAULT_REFERENCE_REBIN)
     diffs = np.diff(k_ref)
     if diffs.size == 0:
         raise ValueError("Cannot infer analytic dk from a single mock k bin.")
@@ -116,7 +128,7 @@ def _build_linear_k_grid(kmin, kmax, dk):
     return grid
 
 
-def _resolve_mock_settings(args, quantiles):
+def _resolve_mock_settings(args, quantiles, ells):
     rebin = args.mock_rebin
     kmin = args.mock_kmin
     kmax = args.mock_kmax
@@ -133,14 +145,14 @@ def _resolve_mock_settings(args, quantiles):
             kmax = _parse_legacy_kmax(args.kmax)
 
     if kmin is None:
-        kmin = float(_load_mock_k(quantiles, rebin).min())
+        kmin = float(_load_mock_k(quantiles, ells, rebin).min())
     if kmax is None:
         kmax = np.inf
     return {"rebin": rebin, "kmin": float(kmin), "kmax": float(kmax)}
 
 
-def _resolve_analytic_settings(args, quantiles):
-    k_ref = _load_mock_k(quantiles, DEFAULT_REFERENCE_REBIN)
+def _resolve_analytic_settings(args, quantiles, ells):
+    k_ref = _load_mock_k(quantiles, ells, DEFAULT_REFERENCE_REBIN)
     kmin = args.analytic_kmin
     kmax = args.analytic_kmax
     dk = args.analytic_dk
@@ -165,7 +177,7 @@ def _resolve_analytic_settings(args, quantiles):
     if kmax is None:
         kmax = DEFAULT_ANALYTIC_KMAX
     if dk is None:
-        dk = _infer_default_analytic_dk(quantiles)
+        dk = _infer_default_analytic_dk(quantiles, ells)
 
     return {
         "kmin": float(kmin),
@@ -204,13 +216,13 @@ def _build_default_shot_noise(pair_order, auto_shot, cross_shot):
     return shot
 
 
-def _pair_block_edges(pair_order, block_sizes):
-    if len(pair_order) * len(ELLS) != len(block_sizes):
+def _pair_block_edges(pair_order, block_sizes, ells):
+    if len(pair_order) * len(ells) != len(block_sizes):
         raise ValueError("block_sizes must contain one entry per pair-ell block.")
     edges = []
     offset = 0
     for idx in range(len(pair_order)):
-        pair_size = sum(block_sizes[idx * len(ELLS):(idx + 1) * len(ELLS)])
+        pair_size = sum(block_sizes[idx * len(ells):(idx + 1) * len(ells)])
         offset += pair_size
         edges.append(offset)
     return edges[:-1]
@@ -225,7 +237,7 @@ def _ell_block_edges(block_sizes):
     return edges[:-1]
 
 
-def _compute_fiducial_pair_poles(cfg, cosmo, k, pair_order, ds_model):
+def _compute_fiducial_pair_poles(cfg, cosmo, k, pair_order, ds_model, ells):
     bins_by_label = {ds_bin.label: ds_bin for ds_bin in cfg.split_bins}
     poles = {}
     for label_a, label_b in pair_order:
@@ -238,7 +250,7 @@ def _compute_fiducial_pair_poles(cfg, cosmo, k, pair_order, ds_model):
                 kernel=cfg.kernel, ds_model=ds_model,
             )
 
-        poles[(label_a, label_b)] = compute_multipoles(k, model, ells=ELLS)
+        poles[(label_a, label_b)] = compute_multipoles(k, model, ells=ells)
     return poles
 
 
@@ -252,18 +264,19 @@ def _resolve_pqq_covariance(
     shot_noise,
     fiducial_poles,
     mock_cfg,
+    ells,
 ):
     if args.diag_cov and args.analytic_cov:
         raise ValueError("Choose at most one of --diag-cov and --analytic-cov.")
 
     if args.diag_cov:
-        return diagonal_covariance(flat[full_mask], rescale=args.cov_rescale)
+        return build_diagonal_covariance(flat[full_mask], rescale=args.cov_rescale)
 
     if args.analytic_cov:
         return analytic_pqq_covariance(
             k,
             fiducial_poles,
-            ells=ELLS,
+            ells=ells,
             volume=args.box_volume,
             pair_order=pair_order,
             shot_noise=shot_noise,
@@ -281,10 +294,10 @@ def _resolve_pqq_covariance(
             "Pass --autos-only or use --analytic-cov."
         )
 
-    cov = mock_covariance_matrix(
+    cov = estimate_mock_covariance(
         COV_DIR,
         "pqq_auto",
-        ELLS,
+        ells,
         k_data=k,
         mask=full_mask,
         rescale=args.cov_rescale,
@@ -297,7 +310,7 @@ def _resolve_pqq_covariance(
     return cov, None
 
 
-def _print_covariance_summary(args, quantiles, pair_order, block_sizes, k, binning_summary):
+def _print_covariance_summary(args, quantiles, pair_order, block_sizes, k, binning_summary, ells):
     source = _covariance_source_label(args)
 
     print("Preparing P_qq correlation matrix")
@@ -306,7 +319,7 @@ def _print_covariance_summary(args, quantiles, pair_order, block_sizes, k, binni
     print(f"  pair order: {pair_order}")
     print(f"  autos only: {args.autos_only}")
     print(f"  ds model: {args.ds_model}")
-    print(f"  ells: {ELLS}")
+    print(f"  ells: {ells}")
     print(f"  nk: {len(k)}")
     print(f"  retained bins per block: {block_sizes}")
     print(f"  covariance rescale: {args.cov_rescale}")
@@ -332,6 +345,8 @@ def main():
                         help="Density-split theory configuration used to build analytic fiducial spectra.")
     parser.add_argument("--quantiles", nargs="+", default=None, metavar="Q",
                         help="Density-split quantiles to include when building DS-pair blocks.")
+    parser.add_argument("--ells", nargs="+", type=int, default=None, metavar="ELL",
+                        help="Multipoles to plot, for example --ells 0 2.")
     parser.add_argument("--autos-only", action="store_true",
                         help="Plot only auto-spectrum DS blocks (e.g. DS1-DS1, DS5-DS5).")
     parser.add_argument("--ds-model", type=str, default="baseline",
@@ -376,6 +391,7 @@ def main():
     args = parser.parse_args()
 
     quantiles = _parse_quantiles(args.quantiles)
+    ells = _parse_ells(args.ells)
     full_pair_order = _build_pair_order(quantiles)
     pair_order = _filter_auto_pairs(full_pair_order, args.autos_only)
     shot_noise = _build_default_shot_noise(
@@ -392,14 +408,14 @@ def main():
         "engine": cfg.cosmo.engine,
     })
 
-    mock_cfg = _resolve_mock_settings(args, quantiles)
+    mock_cfg = _resolve_mock_settings(args, quantiles, ells)
     if args.analytic_cov or args.diag_cov:
-        analytic_cfg = _resolve_analytic_settings(args, quantiles)
+        analytic_cfg = _resolve_analytic_settings(args, quantiles, ells)
         k = analytic_cfg["k"]
-        poles = _compute_fiducial_pair_poles(cfg, cosmo, k, full_pair_order, args.ds_model)
-        full_mask = np.ones(len(pair_order) * len(ELLS) * len(k), dtype=bool)
-        flat = np.concatenate([poles[pair][ell] for pair in pair_order for ell in ELLS])
-        block_sizes = [len(k)] * (len(pair_order) * len(ELLS))
+        poles = _compute_fiducial_pair_poles(cfg, cosmo, k, full_pair_order, args.ds_model, ells)
+        full_mask = np.ones(len(pair_order) * len(ells) * len(k), dtype=bool)
+        flat = np.concatenate([poles[pair][ell] for pair in pair_order for ell in ells])
+        block_sizes = [len(k)] * (len(pair_order) * len(ells))
         binning_summary = [
             "binning source: analytic grid",
             f"analytic kmin: {analytic_cfg['kmin']}",
@@ -408,11 +424,11 @@ def main():
             f"analytic nk: {len(k)}",
         ]
     else:
-        k = _load_mock_k(quantiles, mock_cfg["rebin"], kmin=mock_cfg["kmin"], kmax=mock_cfg["kmax"])
+        k = _load_mock_k(quantiles, ells, mock_cfg["rebin"], kmin=mock_cfg["kmin"], kmax=mock_cfg["kmax"])
         poles = {}
-        full_mask = np.ones(len(pair_order) * len(ELLS) * len(k), dtype=bool)
+        full_mask = np.ones(len(pair_order) * len(ells) * len(k), dtype=bool)
         flat = np.zeros(full_mask.sum(), dtype=float)
-        block_sizes = [len(k)] * (len(pair_order) * len(ELLS))
+        block_sizes = [len(k)] * (len(pair_order) * len(ells))
         binning_summary = [
             "binning source: mock I/O",
             f"mock rebin: {mock_cfg['rebin']}",
@@ -420,7 +436,7 @@ def main():
             f"mock kmax: {mock_cfg['kmax']}",
         ]
 
-    _print_covariance_summary(args, quantiles, pair_order, block_sizes, k, binning_summary)
+    _print_covariance_summary(args, quantiles, pair_order, block_sizes, k, binning_summary, ells)
 
     cov, _ = _resolve_pqq_covariance(
         args,
@@ -432,12 +448,14 @@ def main():
         shot_noise,
         poles,
         mock_cfg,
+        ells,
     )
     print(f"  covariance matrix shape: {cov.shape}")
 
     pair_str = ", ".join(f"{a}-{b}" for a, b in pair_order)
     fig, ax = plot_correlation_matrix(
         cov,
+        ells=ells,
         block_sizes=block_sizes,
         cmap="RdBu_r",
         title=rf"$P_{{qq}}$ correlation ({args.ds_model}; {pair_str})",
@@ -447,7 +465,7 @@ def main():
         ax.axvline(edge - 0.5, color="k", lw=0.35, alpha=0.25)
         ax.axhline(edge - 0.5, color="k", lw=0.35, alpha=0.25)
 
-    for edge in _pair_block_edges(pair_order, block_sizes):
+    for edge in _pair_block_edges(pair_order, block_sizes, ells):
         ax.axvline(edge - 0.5, color="k", lw=0.8, alpha=0.8)
         ax.axhline(edge - 0.5, color="k", lw=0.8, alpha=0.8)
 

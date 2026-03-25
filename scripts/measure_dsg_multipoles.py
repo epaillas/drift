@@ -14,7 +14,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from drift.io import load_measurements
+from drift.io import load_observable_measurements
 
 # ---------------------------------------------------------------------------
 # Parameters
@@ -112,7 +112,7 @@ def main():
     )
 
     # 3. Summary
-    k, multipoles_per_bin = load_measurements(output_fn)
+    k, multipoles_per_bin = load_observable_measurements(output_fn, "pqg")
     print(f"\nSummary:")
     print(f"  k range: [{k.min():.4f}, {k.max():.4f}] h/Mpc  ({len(k)} bins)")
     for label, poles in multipoles_per_bin.items():
