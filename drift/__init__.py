@@ -1,3 +1,9 @@
+"""DRIFT — Density-split Renormalized Inference and Field Theory.
+
+Theory predictions for density-split (DS) and galaxy power-spectrum multipoles,
+including tree-level, EFT counterterms, and one-loop SPT corrections.
+"""
+
 from .analytic_marginalization import MarginalizedLikelihood
 from .covariance import (
     analytic_pgg_covariance,

@@ -27,7 +27,23 @@ class DensitySplitBin:
 
 @dataclass
 class DensitySplitEFTParameters:
-    """EFT bias parameters for one density-split bin."""
+    """EFT bias parameters for one density-split bin.
+
+    Attributes
+    ----------
+    label : str
+        Human-readable label, e.g. 'DS1'.
+    bq1 : float
+        Linear density-split bias.
+    bq2 : float
+        Second-order density bias. Default 0.
+    bqK2 : float
+        Second-order tidal bias. Default 0.
+    bq_nabla2 : float
+        Higher-derivative (Laplacian) counterterm coefficient. Default 0.
+    beta_q : float
+        Phenomenological anisotropy parameter. Default 0.
+    """
 
     label: str
     bq1: float

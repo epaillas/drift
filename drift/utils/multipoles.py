@@ -142,7 +142,32 @@ def power_to_correlation_multipoles(
     extrap="log",
     **fftlog_kwargs,
 ) -> tuple:
-    """Transform power-spectrum multipoles into correlation-function multipoles."""
+    """Transform power-spectrum multipoles into correlation-function multipoles.
+
+    Uses the FFTLog-based ``cosmoprimo.fftlog.PowerToCorrelation`` transform.
+
+    Parameters
+    ----------
+    k : array_like, shape (nk,)
+        Log-spaced wavenumbers in h/Mpc.
+    poles : dict
+        {ell: P_ell(k)} for each ell in ells.
+    ells : tuple of int, default (0, 2, 4)
+        Multipole orders to transform.
+    q : float, default 1.0
+        FFTLog bias parameter.
+    extrap : str, default 'log'
+        Extrapolation mode passed to PowerToCorrelation.
+    **fftlog_kwargs
+        Extra keyword arguments forwarded to PowerToCorrelation.
+
+    Returns
+    -------
+    s : np.ndarray, shape (ns,)
+        Separation array in Mpc/h.
+    xi : dict
+        {ell: np.ndarray of shape (ns,)} for each ell in ells.
+    """
     k = _validate_fftlog_k_grid(k)
     ells = tuple(ells)
 
@@ -173,7 +198,37 @@ def compute_correlation_multipoles(
     fftlog_kwargs=None,
     **model_kwargs,
 ) -> tuple:
-    """Project P(k, mu) to multipoles and transform them to xi_ell(s)."""
+    """Project P(k, mu) to multipoles and transform them to xi_ell(s).
+
+    Combines ``compute_multipoles`` and ``power_to_correlation_multipoles``
+    in one call.
+
+    Parameters
+    ----------
+    k : array_like, shape (nk,)
+        Log-spaced wavenumbers in h/Mpc.
+    model_callable : callable
+        Function model_callable(k, mu, **model_kwargs) -> array (nk, nmu).
+    ells : tuple of int, default (0, 2, 4)
+        Multipole orders to compute.
+    mu_grid : tuple or None
+        Gauss-Legendre grid. Defaults to 200-point grid.
+    q : float, default 1.0
+        FFTLog bias parameter.
+    extrap : str, default 'log'
+        Extrapolation mode for FFTLog.
+    fftlog_kwargs : dict or None
+        Extra keyword arguments forwarded to ``power_to_correlation_multipoles``.
+    **model_kwargs
+        Extra keyword arguments forwarded to model_callable.
+
+    Returns
+    -------
+    s : np.ndarray, shape (ns,)
+        Separation array in Mpc/h.
+    xi : dict
+        {ell: np.ndarray of shape (ns,)} for each ell in ells.
+    """
     if fftlog_kwargs is None:
         fftlog_kwargs = {}
     poles = compute_multipoles(

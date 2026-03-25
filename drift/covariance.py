@@ -734,7 +734,44 @@ def analytic_pqq_covariance(
     cng_coherence: float = 0.35,
     ssc_sigma_b2: float | None = None,
 ):
-    """Gaussian cubic-box covariance for density-split pair multipoles."""
+    """Gaussian cubic-box covariance for density-split pair multipoles.
+
+    Parameters
+    ----------
+    k : np.ndarray, shape (nk,)
+        Bin centers in h/Mpc.
+    poles : dict or np.ndarray
+        Fiducial DS-pair multipoles as ``{(label_i, label_j): {ell: P_ell}}``
+        or a flat vector ordered by pair then multipole.
+    ells : tuple of int
+        Multipoles included in the data vector.
+    volume : float
+        Survey/box volume in (Mpc/h)^3.
+    pair_order : sequence of 2-tuples
+        Ordered list of DS-pair labels defining the data-vector layout.
+    shot_noise : dict or float
+        Shot-noise power per pair. Can be a dict ``{(i,j): value}`` or a
+        scalar applied uniformly.
+    mask : np.ndarray of bool, optional
+        Boolean mask applied to the flattened covariance.
+    rescale : float, default 1.0
+        Divide covariance by this factor.
+    terms : str, default 'gaussian'
+        Covariance terms: 'gaussian', 'effective_cng', 'ssc'.
+    mu_points : int, default 256
+        Gauss-Legendre nodes for mu integral.
+    cng_amplitude : float, default 0.0
+        Amplitude of the phenomenological connected non-Gaussian correction.
+    cng_coherence : float, default 0.35
+        Correlation length of the effective CNG correction in ln k.
+    ssc_sigma_b2 : float, optional
+        Long-mode density variance for SSC. Required when 'ssc' in terms.
+
+    Returns
+    -------
+    cov : np.ndarray, shape (n, n)
+    precision : np.ndarray, shape (n, n)
+    """
     term_labels = _normalize_terms(terms)
     if rescale <= 0.0:
         raise ValueError("rescale must be positive.")
@@ -804,7 +841,50 @@ def analytic_pqg_covariance(
     cng_coherence: float = 0.35,
     ssc_sigma_b2: float | None = None,
 ):
-    """Gaussian cubic-box covariance for density-split-galaxy multipoles."""
+    """Gaussian cubic-box covariance for density-split-galaxy multipoles.
+
+    Parameters
+    ----------
+    k : np.ndarray, shape (nk,)
+        Bin centers in h/Mpc.
+    pqg_poles : dict or np.ndarray
+        DS×galaxy multipoles as ``{label: {ell: P_ell}}`` or flat vector.
+    pqq_poles : dict or np.ndarray
+        DS-pair multipoles as ``{(label_i, label_j): {ell: P_ell}}`` or flat.
+    pgg_poles : dict or np.ndarray
+        Galaxy auto-power multipoles as ``{ell: P_ell}`` or flat vector.
+    ells : tuple of int
+        Multipoles included in the data vector.
+    volume : float
+        Survey/box volume in (Mpc/h)^3.
+    ds_labels : sequence of str
+        Ordered DS bin labels (e.g. ['DS1', 'DS2', 'DS3', 'DS4', 'DS5']).
+    galaxy_shot_noise : float
+        Galaxy shot-noise power in (Mpc/h)^3.
+    ds_pair_shot_noise : dict or float
+        Shot-noise per DS pair ``{(i,j): value}`` or scalar.
+    ds_cross_shot_noise : dict or None
+        Shot-noise per DS×galaxy cross ``{label: value}``. Default None (zero).
+    mask : np.ndarray of bool, optional
+        Boolean mask applied to the flattened covariance.
+    rescale : float, default 1.0
+        Divide covariance by this factor.
+    terms : str, default 'gaussian'
+        Covariance terms: 'gaussian', 'effective_cng', 'ssc'.
+    mu_points : int, default 256
+        Gauss-Legendre nodes for mu integral.
+    cng_amplitude : float, default 0.0
+        Amplitude of the phenomenological connected non-Gaussian correction.
+    cng_coherence : float, default 0.35
+        Correlation length of the effective CNG correction in ln k.
+    ssc_sigma_b2 : float, optional
+        Long-mode density variance for SSC. Required when 'ssc' in terms.
+
+    Returns
+    -------
+    cov : np.ndarray, shape (n, n)
+    precision : np.ndarray, shape (n, n)
+    """
     term_labels = _normalize_terms(terms)
     if rescale <= 0.0:
         raise ValueError("rescale must be positive.")
@@ -899,7 +979,31 @@ def propagate_covariance_to_correlation(
     *,
     observable_blocks: int = 1,
 ) -> np.ndarray:
-    """Propagate a multipole covariance matrix from ``k`` space to ``s`` space."""
+    """Propagate a multipole covariance matrix from ``k`` space to ``s`` space.
+
+    Applies the linear Hankel transform T such that Cov_s = T Cov_k T^T,
+    where T is block-diagonal with one block per observable and one sub-block
+    per multipole order.
+
+    Parameters
+    ----------
+    cov_k : np.ndarray, shape (n, n)
+        Fourier-space covariance matrix. Must be consistent with
+        ``observable_blocks * len(ells) * len(k)``.
+    k : np.ndarray, shape (nk,)
+        Wavenumber bin centers in h/Mpc.
+    s : np.ndarray, shape (ns,)
+        Separation bin centers in Mpc/h.
+    ells : tuple of int, default (0, 2, 4)
+        Multipole orders in the data vector.
+    observable_blocks : int, default 1
+        Number of independent observable blocks (e.g. number of DS bins).
+
+    Returns
+    -------
+    np.ndarray, shape (observable_blocks * len(ells) * ns,
+                       observable_blocks * len(ells) * ns)
+    """
     k = _validate_positive_increasing_grid(k, "k")
     s = _validate_positive_increasing_grid(s, "s")
     cov_k = np.asarray(cov_k, dtype=float)
@@ -960,7 +1064,41 @@ def analytic_xigg_covariance(
     cng_coherence: float = 0.35,
     ssc_sigma_b2: float | None = None,
 ):
-    """Configuration-space covariance for galaxy correlation-function multipoles."""
+    """Configuration-space covariance for galaxy correlation-function multipoles.
+
+    Computes the Fourier-space covariance via ``analytic_pgg_covariance`` and
+    propagates it to configuration space with ``propagate_covariance_to_correlation``.
+
+    Parameters
+    ----------
+    k : np.ndarray, shape (nk,)
+        Bin centers in h/Mpc.
+    s : np.ndarray, shape (ns,)
+        Separation bin centers in Mpc/h.
+    poles : dict or np.ndarray
+        Galaxy auto-power multipoles.
+    ells : tuple of int
+        Multipoles in the data vector.
+    volume : float
+        Survey/box volume in (Mpc/h)^3.
+    number_density : float, optional
+        Number density in (h/Mpc)^3. Mutually exclusive with ``shot_noise``.
+    shot_noise : float, optional
+        Shot-noise power in (Mpc/h)^3. Mutually exclusive with ``number_density``.
+    mask : np.ndarray of bool, optional
+        Boolean mask applied to the output covariance.
+    rescale : float, default 1.0
+    terms : str, default 'gaussian'
+    mu_points : int, default 256
+    cng_amplitude : float, default 0.0
+    cng_coherence : float, default 0.35
+    ssc_sigma_b2 : float, optional
+
+    Returns
+    -------
+    cov : np.ndarray, shape (n, n)
+    precision : np.ndarray, shape (n, n)
+    """
     cov_k, _ = analytic_pgg_covariance(
         k,
         poles,
@@ -999,7 +1137,36 @@ def analytic_xiqq_covariance(
     cng_coherence: float = 0.35,
     ssc_sigma_b2: float | None = None,
 ):
-    """Configuration-space covariance for density-split pair correlation multipoles."""
+    """Configuration-space covariance for density-split pair correlation multipoles.
+
+    Computes the Fourier-space covariance via ``analytic_pqq_covariance`` and
+    propagates it to configuration space.
+
+    Parameters
+    ----------
+    k : np.ndarray, shape (nk,)
+        Bin centers in h/Mpc.
+    s : np.ndarray, shape (ns,)
+        Separation bin centers in Mpc/h.
+    poles : dict or np.ndarray
+        DS-pair power-spectrum multipoles.
+    ells : tuple of int
+    volume : float
+    pair_order : sequence of 2-tuples
+    shot_noise : dict or float
+    mask : np.ndarray of bool, optional
+    rescale : float, default 1.0
+    terms : str, default 'gaussian'
+    mu_points : int, default 256
+    cng_amplitude : float, default 0.0
+    cng_coherence : float, default 0.35
+    ssc_sigma_b2 : float, optional
+
+    Returns
+    -------
+    cov : np.ndarray, shape (n, n)
+    precision : np.ndarray, shape (n, n)
+    """
     pair_order = _normalize_pair_order(pair_order)
     cov_k, _ = analytic_pqq_covariance(
         k,
@@ -1049,7 +1216,38 @@ def analytic_xiqg_covariance(
     cng_coherence: float = 0.35,
     ssc_sigma_b2: float | None = None,
 ):
-    """Configuration-space covariance for density-split-galaxy correlation multipoles."""
+    """Configuration-space covariance for density-split-galaxy correlation multipoles.
+
+    Computes the Fourier-space covariance via ``analytic_pqg_covariance`` and
+    propagates it to configuration space.
+
+    Parameters
+    ----------
+    k : np.ndarray, shape (nk,)
+        Bin centers in h/Mpc.
+    s : np.ndarray, shape (ns,)
+        Separation bin centers in Mpc/h.
+    pqg_poles, pqq_poles, pgg_poles : dict or np.ndarray
+        Fiducial multipoles for each spectrum type.
+    ells : tuple of int
+    volume : float
+    ds_labels : sequence of str
+    galaxy_shot_noise : float
+    ds_pair_shot_noise : dict or float
+    ds_cross_shot_noise : dict or None
+    mask : np.ndarray of bool, optional
+    rescale : float, default 1.0
+    terms : str, default 'gaussian'
+    mu_points : int, default 256
+    cng_amplitude : float, default 0.0
+    cng_coherence : float, default 0.35
+    ssc_sigma_b2 : float, optional
+
+    Returns
+    -------
+    cov : np.ndarray, shape (n, n)
+    precision : np.ndarray, shape (n, n)
+    """
     ds_labels = _normalize_label_order(ds_labels)
     cov_k, _ = analytic_pqg_covariance(
         k,

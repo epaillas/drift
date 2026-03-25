@@ -20,11 +20,13 @@ _VALID_SPACES = ("redshift", "real")
 
 
 def _validate_mode(mode: str) -> None:
+    """Raise ValueError if mode is not in _VALID_MODES."""
     if mode not in _VALID_MODES:
         raise ValueError(f"Unknown mode '{mode}'. Choose one of {_VALID_MODES}.")
 
 
 def _validate_ds_model(ds_model: str) -> None:
+    """Raise ValueError if ds_model is not in _VALID_DS_MODELS."""
     if ds_model not in _VALID_DS_MODELS:
         raise ValueError(
             f"Unknown ds_model '{ds_model}'. Choose one of {_VALID_DS_MODELS}."
@@ -32,6 +34,7 @@ def _validate_ds_model(ds_model: str) -> None:
 
 
 def _validate_space(space: str) -> None:
+    """Raise ValueError if space is not in _VALID_SPACES."""
     if space not in _VALID_SPACES:
         raise ValueError(
             f"Unknown space '{space}'. Choose one of {_VALID_SPACES}."
@@ -39,6 +42,7 @@ def _validate_space(space: str) -> None:
 
 
 def _get_kernel(kernel: str, k: np.ndarray, R: float) -> np.ndarray:
+    """Return the smoothing kernel W_R(k) for the given kernel name."""
     if kernel == "gaussian":
         return gaussian_kernel(k, R)
     if kernel == "tophat":
@@ -63,6 +67,7 @@ def _ds_eft_leg_factor(
 def _normalized_ds_params(
     ds_params: DensitySplitEFTParameters,
 ) -> DensitySplitEFTParameters:
+    """Return a copy of ds_params with bq1 set to 1 for counterterm normalization."""
     return DensitySplitEFTParameters(
         label=ds_params.label,
         bq1=1.0,
@@ -73,6 +78,7 @@ def _normalized_ds_params(
 def _reject_unimplemented_ds_loops(
     *ds_params_list: DensitySplitEFTParameters,
 ) -> None:
+    """Raise NotImplementedError if any DS bin has nonzero bq2 or bqK2."""
     for ds_params in ds_params_list:
         if ds_params.bq2 != 0.0 or ds_params.bqK2 != 0.0:
             raise NotImplementedError(
@@ -156,7 +162,38 @@ def ds_galaxy_eft_pkmu(
     ds_model: str = "baseline",
     mode: str = "eft_ct",
 ) -> np.ndarray:
-    """EFT density-split × galaxy cross power spectrum P(k, mu)."""
+    """EFT density-split × galaxy cross power spectrum P(k, mu).
+
+    Parameters
+    ----------
+    k : array_like, shape (nk,)
+        Wavenumbers in h/Mpc.
+    mu : array_like, shape (nmu,)
+        Cosine of angle to line of sight.
+    z : float
+        Redshift.
+    cosmo : cosmoprimo.Cosmology
+        Cosmology object used to evaluate P_lin and f.
+    ds_params : DensitySplitEFTParameters
+        EFT bias parameters for the density-split bin q_i.
+    gal_params : GalaxyEFTParameters
+        EFT bias and nuisance parameters for the galaxy tracer.
+    R : float
+        Smoothing radius in Mpc/h.
+    kernel : str, default 'gaussian'
+        Smoothing kernel: 'gaussian' or 'tophat'.
+    space : str, default 'redshift'
+        'redshift' (include RSD) or 'real'.
+    ds_model : str, default 'baseline'
+        Angular model variant: 'baseline', 'rsd_selection', or 'phenomenological'.
+    mode : str, default 'eft_ct'
+        Theory level: 'tree', 'eft_ct' (tree + counterterms), 'eft'
+        (eft_ct + stochastic), or 'one_loop' (full one-loop SPT).
+
+    Returns
+    -------
+    np.ndarray, shape (nk, nmu)
+    """
     _validate_mode(mode)
     _validate_ds_model(ds_model)
     _validate_space(space)
@@ -285,7 +322,41 @@ def dspair_eft_pkmu(
     sqq0: float = 0.0,
     sqq2: float = 0.0,
 ) -> np.ndarray:
-    """EFT density-split pair power spectrum P_{q_i q_j}(k, mu)."""
+    """EFT density-split pair power spectrum P_{q_i q_j}(k, mu).
+
+    Parameters
+    ----------
+    k : array_like, shape (nk,)
+        Wavenumbers in h/Mpc.
+    mu : array_like, shape (nmu,)
+        Cosine of angle to line of sight.
+    z : float
+        Redshift.
+    cosmo : cosmoprimo.Cosmology
+        Cosmology object used to evaluate P_lin and f.
+    ds_params_a : DensitySplitEFTParameters
+        EFT bias parameters for bin q_i.
+    ds_params_b : DensitySplitEFTParameters
+        EFT bias parameters for bin q_j.
+    R : float
+        Smoothing radius in Mpc/h.
+    kernel : str, default 'gaussian'
+        Smoothing kernel: 'gaussian' or 'tophat'.
+    space : str, default 'redshift'
+        'redshift' (include RSD) or 'real'.
+    ds_model : str, default 'baseline'
+        Angular model variant: 'baseline', 'rsd_selection', or 'phenomenological'.
+    mode : str, default 'eft_ct'
+        Theory level: 'tree', 'eft_ct', 'eft', or 'one_loop'.
+    sqq0 : float, default 0.0
+        Isotropic stochastic amplitude (constant in k).
+    sqq2 : float, default 0.0
+        k^2-dependent stochastic amplitude.
+
+    Returns
+    -------
+    np.ndarray, shape (nk, nmu)
+    """
     _validate_mode(mode)
     _validate_ds_model(ds_model)
     _validate_space(space)

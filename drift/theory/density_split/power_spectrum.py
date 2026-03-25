@@ -12,6 +12,7 @@ _VALID_SPACES = ("redshift", "real")
 
 
 def _validate_ds_model(ds_model: str) -> None:
+    """Raise ValueError if ds_model is not in _VALID_DS_MODELS."""
     if ds_model not in _VALID_DS_MODELS:
         raise ValueError(
             f"Unknown ds_model '{ds_model}'. Choose one of {_VALID_DS_MODELS}."
@@ -19,6 +20,7 @@ def _validate_ds_model(ds_model: str) -> None:
 
 
 def _validate_space(space: str) -> None:
+    """Raise ValueError if space is not in _VALID_SPACES."""
     if space not in _VALID_SPACES:
         raise ValueError(
             f"Unknown space '{space}'. Choose one of {_VALID_SPACES}."
@@ -26,6 +28,7 @@ def _validate_space(space: str) -> None:
 
 
 def _get_kernel(kernel: str, k: np.ndarray, R: float) -> np.ndarray:
+    """Return the smoothing kernel W_R(k) for the given kernel name."""
     if kernel == "gaussian":
         return gaussian_kernel(k, R)
     if kernel == "tophat":
@@ -70,7 +73,33 @@ def ds_matter_pkmu(
     space: str = "redshift",
     ds_model: str = "baseline",
 ) -> np.ndarray:
-    """Density-split-matter cross power spectrum P_{q_i, m}(k, mu, z)."""
+    """Density-split-matter cross power spectrum P_{q_i, m}(k, mu, z).
+
+    Parameters
+    ----------
+    k : array_like, shape (nk,)
+        Wavenumbers in h/Mpc.
+    mu : array_like, shape (nmu,)
+        Cosine of angle to line of sight.
+    z : float
+        Redshift.
+    cosmo : cosmoprimo.Cosmology
+        Cosmology object used to evaluate P_lin and f.
+    ds_params : DensitySplitBin
+        Density-split bias parameters for bin q_i.
+    R : float
+        Smoothing radius in Mpc/h.
+    kernel : str, default 'gaussian'
+        Smoothing kernel: 'gaussian' or 'tophat'.
+    space : str, default 'redshift'
+        'redshift' (include RSD via growth rate f) or 'real'.
+    ds_model : str, default 'baseline'
+        Angular model variant: 'baseline', 'rsd_selection', or 'phenomenological'.
+
+    Returns
+    -------
+    np.ndarray, shape (nk, nmu)
+    """
     _validate_ds_model(ds_model)
     _validate_space(space)
 
@@ -98,7 +127,35 @@ def ds_galaxy_pkmu(
     space: str = "redshift",
     ds_model: str = "baseline",
 ) -> np.ndarray:
-    """Density-split-galaxy cross power spectrum P_{q_i, g}(k, mu, z)."""
+    """Density-split-galaxy cross power spectrum P_{q_i, g}(k, mu, z).
+
+    Parameters
+    ----------
+    k : array_like, shape (nk,)
+        Wavenumbers in h/Mpc.
+    mu : array_like, shape (nmu,)
+        Cosine of angle to line of sight.
+    z : float
+        Redshift.
+    cosmo : cosmoprimo.Cosmology
+        Cosmology object used to evaluate P_lin and f.
+    ds_params : DensitySplitBin
+        Density-split bias parameters for bin q_i.
+    tracer_bias : float
+        Linear galaxy bias b_1.
+    R : float
+        Smoothing radius in Mpc/h.
+    kernel : str, default 'gaussian'
+        Smoothing kernel: 'gaussian' or 'tophat'.
+    space : str, default 'redshift'
+        'redshift' (include RSD) or 'real'.
+    ds_model : str, default 'baseline'
+        Angular model variant: 'baseline', 'rsd_selection', or 'phenomenological'.
+
+    Returns
+    -------
+    np.ndarray, shape (nk, nmu)
+    """
     _validate_ds_model(ds_model)
     _validate_space(space)
 
@@ -126,7 +183,35 @@ def dspair_pkmu(
     space: str = "redshift",
     ds_model: str = "baseline",
 ) -> np.ndarray:
-    """Density-split pair power spectrum P_{q_i q_j}(k, mu, z)."""
+    """Density-split pair power spectrum P_{q_i q_j}(k, mu, z).
+
+    Parameters
+    ----------
+    k : array_like, shape (nk,)
+        Wavenumbers in h/Mpc.
+    mu : array_like, shape (nmu,)
+        Cosine of angle to line of sight.
+    z : float
+        Redshift.
+    cosmo : cosmoprimo.Cosmology
+        Cosmology object used to evaluate P_lin and f.
+    ds_params_a : DensitySplitBin
+        Density-split bias parameters for bin q_i.
+    ds_params_b : DensitySplitBin
+        Density-split bias parameters for bin q_j.
+    R : float
+        Smoothing radius in Mpc/h.
+    kernel : str, default 'gaussian'
+        Smoothing kernel: 'gaussian' or 'tophat'.
+    space : str, default 'redshift'
+        'redshift' (include RSD) or 'real'.
+    ds_model : str, default 'baseline'
+        Angular model variant: 'baseline', 'rsd_selection', or 'phenomenological'.
+
+    Returns
+    -------
+    np.ndarray, shape (nk, nmu)
+    """
     _validate_ds_model(ds_model)
     _validate_space(space)
 

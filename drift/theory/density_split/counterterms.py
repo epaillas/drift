@@ -103,7 +103,25 @@ def density_split_pair_stochastic_term(
     sqq0: float = 0.0,
     sqq2: float = 0.0,
 ) -> np.ndarray:
-    """Isotropic stochastic contribution for DS-pair spectra."""
+    """Isotropic stochastic contribution for DS-pair spectra.
+
+    P_stoch(k, mu) = sqq0 + sqq2 * k^2   (constant in mu)
+
+    Parameters
+    ----------
+    k : array_like, shape (nk,)
+        Wavenumbers in h/Mpc.
+    mu : array_like, shape (nmu,)
+        Cosine of angle to line of sight.
+    sqq0 : float, default 0.0
+        Constant stochastic power amplitude in (Mpc/h)^3.
+    sqq2 : float, default 0.0
+        k^2-dependent stochastic amplitude in (Mpc/h)^5.
+
+    Returns
+    -------
+    np.ndarray, shape (nk, nmu)
+    """
     k = np.asarray(k, dtype=float)
     mu = np.asarray(mu, dtype=float)
     stoch_k = sqq0 + sqq2 * k**2

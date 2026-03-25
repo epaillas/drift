@@ -7,41 +7,71 @@
 
 # DRIFT — Density-split Renormalized Inference and Field Theory
 
-DRIFT computes theory predictions for density-split (DS) power spectrum multipoles in redshift space, including tree-level, EFT counterterms, and one-loop corrections. Measurements are made separately (e.g. with [ACM](https://github.com/epaillas/acm)); this package is theory-prediction only.
+DRIFT computes perturbation-theory predictions for density-split (DS) and galaxy power-spectrum multipoles in redshift space. Measurements are performed separately (e.g. with [ACM](https://github.com/epaillas/acm)); this package is theory-prediction only.
 
 ---
 
-## Physics
+## Philosophy
 
-Density-split statistics divide the survey volume into quantiles ranked by local density. Each quantile $q_i$ has a characteristic bias that encodes its environment. DRIFT models the cross power spectra of these quantiles with matter or a galaxy tracer.
+Density-split statistics divide a survey volume into quantiles $q_i$ ranked by local smoothed density. Each quantile carries a characteristic large-scale bias that encodes its environment. DRIFT models the Fourier-space cross-spectra of these quantiles with matter or a galaxy tracer, projects them onto Legendre multipoles, and optionally transforms them to configuration space.
 
-### Density-split × matter
+The models are built on Standard Perturbation Theory (SPT) and the Effective Field Theory (EFT) of Large-Scale Structure. Inference-time speed is achieved through analytic template decomposition: bias-independent loop integrals are pre-computed once per cosmology and re-assembled for any parameter combination at negligible cost.
 
-$$P_{q_i, m}(k, \mu, z) = \left[b_{q_i} + b_{q_i}^\nabla (kR)^2\right] \left[1 + f(z)\,\mu^2\right] P_\mathrm{lin}(k, z)\, W_R(k)$$
+---
 
-### Density-split × galaxy
+## Available theory models
 
-$$P_{q_i, g}(k, \mu, z) = \left[b_{q_i} + b_{q_i}^\nabla (kR)^2\right] \left[b_1 + f(z)\,\mu^2\right] P_\mathrm{lin}(k, z)\, W_R(k)$$
+### Tree-level (Kaiser)
 
-where $W_R(k)$ is one smoothing kernel factor (cross-spectrum convention), $f(z)$ is the linear growth rate, $b_{q_i}$ is the linear density-split bias, and $b_{q_i}^\nabla$ is the Laplacian derivative bias.
+| Function | Observable |
+|---|---|
+| `ds_matter_pkmu` / `pqm_mu` | $P_{q_i, m}(k, \mu)$ — DS × matter |
+| `ds_galaxy_pkmu` / `pqg_mu` | $P_{q_i, g}(k, \mu)$ — DS × galaxy |
+| `dspair_pkmu` / `pqq_mu` | $P_{q_i q_j}(k, \mu)$ — DS-pair auto |
+| `galaxy_pkmu` / `pgg_mu` | $P_{gg}(k, \mu)$ — galaxy auto (Kaiser) |
 
-### Multipoles
+### EFT / one-loop
 
-$$P_\ell(k) = \frac{2\ell+1}{2} \int_{-1}^{1} d\mu\; P(k,\mu)\, \mathcal{L}_\ell(\mu)$$
+| Function | Observable | Modes |
+|---|---|---|
+| `ds_galaxy_eft_pkmu` / `pqg_eft_mu` | $P_{q_i, g}(k, \mu)$ | `tree`, `eft_ct`, `eft`, `one_loop` |
+| `dspair_eft_pkmu` / `pqq_eft_mu` | $P_{q_i q_j}(k, \mu)$ | `tree`, `eft_ct`, `eft`, `one_loop` |
+| `galaxy_eft_pkmu` / `pgg_eft_mu` | $P_{gg}(k, \mu)$ | `tree`, `eft_ct`, `eft`, `one_loop` |
 
-for $\ell = 0, 2, 4$, evaluated via Gauss-Legendre quadrature.
+Mode meanings: `tree` — Kaiser; `eft_ct` — tree + EFT counterterms; `eft` — eft_ct + stochastic terms; `one_loop` — full SPT one-loop with all bias operators.
 
-**Units:** $k$ in $h/\mathrm{Mpc}$, $P(k)$ in $(\mathrm{Mpc}/h)^3$.
+All functions accept `space='redshift'` (default) or `space='real'`, and `ds_model` variants `'baseline'`, `'rsd_selection'`, or `'phenomenological'`.
 
-### EFT / One-loop model (pqg_eft_mu)
+### Configuration space
 
-Three modes are available via the `mode` argument:
-- `tree_only` — reproduces `pqg_mu` exactly
-- `eft_lite`  — tree + partial one-loop matter power spectrum + galaxy EFT counterterm
-- `eft_full`  — eft_lite + stochastic contributions
+`compute_ds_galaxy_correlation_multipoles` and `compute_dspair_correlation_multipoles` wrap the Fourier-space models with an FFTLog Hankel transform to produce $\xi_\ell(s)$.
 
-The EFT bias containers are `DSSplitBinEFT` (adds bq2, bqK2, bq_nabla2) and
-`GalaxyEFTParams` (adds b2, bs2, b3nl, c0, c2, c4, s0, s2).
+### Multipole projection
+
+`compute_multipoles` and `project_multipole` project any $P(k, \mu)$ callable onto Legendre multipoles via Gauss-Legendre quadrature.
+
+---
+
+## Additional capabilities
+
+| Component | Purpose |
+|---|---|
+| `analytic_pgg_covariance` / `analytic_pqq_covariance` / `analytic_pqg_covariance` | Analytic Gaussian covariance for power-spectrum multipoles, with optional effective CNG and SSC corrections |
+| `analytic_xigg_covariance` / `analytic_xiqq_covariance` / `analytic_xiqg_covariance` | Same, propagated to configuration space |
+| `GalaxyPowerSpectrumEmulator` | Template emulator for $P_{gg}$ — separates linear and non-linear bias contributions for fast MCMC |
+| `DensitySplitGalaxyPowerSpectrumEmulator` | Template emulator for $P_{q_i, g}$ |
+| `TaylorEmulator` | Taylor-expansion emulator around a fiducial parameter point, for arbitrary callables |
+| `MarginalizedLikelihood` | Analytic marginalisation over linear nuisance parameters |
+
+---
+
+## Key parameter containers
+
+| Class | Parameters |
+|---|---|
+| `DensitySplitBin` | `bq`, `cq`, `beta_q` |
+| `DensitySplitEFTParameters` | `bq1`, `bq2`, `bqK2`, `bq_nabla2`, `beta_q` |
+| `GalaxyEFTParameters` | `b1`, `b2`, `bs2`, `b3nl`, `sigma_fog`, `c0`, `c2`, `c4`, `s0`, `s2` |
 
 ---
 
@@ -60,51 +90,30 @@ Requires: `numpy`, `scipy`, `matplotlib`, `cosmoprimo`, `pyyaml`.
 ```python
 import numpy as np
 import drift
-from drift.cosmology import get_cosmology
-from drift.models import pqm_mu
 
-# Build cosmology
-cosmo = get_cosmology()  # Planck 2018 defaults
+# Cosmology (Planck 2018 defaults)
+cosmo = drift.get_cosmology()
 
-# Define a density-split bin
-ds_bin = drift.DSSplitBin(label="DS1", bq=-1.5)
-
-# Evaluate P(k, mu) on a grid
 k  = np.logspace(np.log10(0.005), np.log10(0.3), 100)
 mu = np.linspace(-1, 1, 200)
-pkmu = pqm_mu(k, mu, z=0.5, cosmo=cosmo, ds_params=ds_bin, R=10.0)  # shape (nk, nmu)
 
-# Project onto multipoles
-poles = drift.compute_multipoles(k, lambda kk, mu: pqm_mu(kk, mu, 0.5, cosmo, ds_bin, 10.0))
+# Tree-level DS × galaxy
+ds_bin = drift.DensitySplitBin(label="DS1", bq=-1.5)
+pkmu = drift.ds_galaxy_pkmu(k, mu, z=0.5, cosmo=cosmo,
+                             ds_params=ds_bin, tracer_bias=2.0, R=10.0)  # (nk, nmu)
+
+# Project to multipoles
+poles = drift.compute_multipoles(k, lambda kk, mm: drift.ds_galaxy_pkmu(
+    kk, mm, z=0.5, cosmo=cosmo, ds_params=ds_bin, tracer_bias=2.0, R=10.0))
 P0, P2, P4 = poles[0], poles[2], poles[4]
+
+# EFT DS × galaxy
+ds_eft = drift.DensitySplitEFTParameters(label="DS1", bq1=-1.5)
+gal    = drift.GalaxyEFTParameters(b1=2.0, c0=0.5)
+pkmu_eft = drift.ds_galaxy_eft_pkmu(k, mu, z=0.5, cosmo=cosmo,
+                                     ds_params=ds_eft, gal_params=gal,
+                                     R=10.0, mode="eft_ct")
 ```
-
-### EFT / one-loop model
-
-```python
-from drift.eft_models import pqg_eft_mu
-from drift.eft_bias import DSSplitBinEFT, GalaxyEFTParams
-from drift.one_loop import compute_one_loop_matter
-
-ds_bin = DSSplitBinEFT(label="DS1", bq1=-1.5)
-gal    = GalaxyEFTParams(b1=2.0)
-
-plin_func = lambda kk: get_linear_power(cosmo, kk, z=0.5)
-p1loop = compute_one_loop_matter(k, plin_func)["p1loop"]
-
-pkmu = pqg_eft_mu(k, mu, z=0.5, cosmo=cosmo,
-                  ds_params=ds_bin, gal_params=gal, R=10.0,
-                  mode="eft_ct",
-                  loop_kwargs={"p1loop_precomputed": p1loop})
-```
-
-### Using a config file
-
-```python
-cfg = drift.load_config("configs/example.yaml")
-```
-
-See `configs/example.yaml` for the full YAML schema.
 
 ---
 
@@ -113,51 +122,26 @@ See `configs/example.yaml` for the full YAML schema.
 ```
 drift/
 ├── drift/
-│   ├── cosmology.py    # cosmoprimo wrapper: P_lin(k,z), f(z)
-│   ├── kernels.py      # Gaussian and top-hat smoothing kernels W_R(k)
-│   ├── bias.py         # DSSplitBin dataclass
-│   ├── rsd.py          # Kaiser RSD factors
-│   ├── models.py       # pqm_mu, pqg_mu — P(k,mu) at tree level
-│   ├── multipoles.py   # Legendre projection via Gauss-Legendre quadrature
-│   ├── config.py       # DriftConfig dataclass + YAML loader
-│   ├── io.py           # save/load .npz and text files
-│   ├── eft_bias.py     # DSSplitBinEFT, GalaxyEFTParams dataclasses
-│   ├── eft_terms.py    # EFT counterterm and stochastic term implementations
-│   ├── eft_models.py   # pqg_eft_mu — EFT P(k,mu) assembler
-│   ├── eft_config.py   # EFTConfig dataclass + YAML loader
-│   └── one_loop.py     # One-loop matter power spectrum (P22, P13, SPT)
+│   ├── theory/
+│   │   ├── density_split/   # DS×m, DS×g, DS-pair models (tree + EFT)
+│   │   └── galaxy/          # Galaxy auto-power models (tree + EFT)
+│   ├── emulators/           # Template emulators for DS×g and Pgg
+│   ├── utils/
+│   │   ├── cosmology.py     # cosmoprimo wrappers, LinearPowerGrid
+│   │   ├── kernels.py       # Gaussian and top-hat smoothing kernels
+│   │   ├── multipoles.py    # Legendre projection, FFTLog transforms
+│   │   ├── one_loop.py      # SPT P22, P13, bias loops
+│   │   ├── ir_resummation.py # BAO damping, wiggle/no-wiggle split
+│   │   └── rsd.py           # Kaiser RSD factors
+│   ├── covariance.py        # Analytic covariance matrices
+│   ├── taylor.py            # Taylor-expansion emulator
+│   ├── analytic_marginalization.py  # Marginalised Gaussian likelihood
+│   ├── synthetic.py         # Noiseless synthetic data vectors
+│   └── io.py                # Save/load, mock covariance helpers
 ├── configs/
 │   └── example.yaml
-├── scripts/
-│   ├── run_dsm_multipoles.py
-│   ├── run_dsg_multipoles.py
-│   ├── plot_dsm_multipoles.py
-│   ├── plot_dsg_multipoles.py
-│   ├── plot_rsd_comparison.py
-│   └── plot_model_comparison.py
+├── scripts/                 # Analysis and plotting scripts
 └── tests/
-    ├── test_kernels.py
-    ├── test_multipoles.py
-    ├── test_models.py
-    ├── test_eft_models.py
-    └── test_one_loop.py
-```
-
----
-
-## Running the examples
-
-```bash
-# Density-split × matter
-python scripts/run_dsm_multipoles.py   # produces outputs/dsm_multipoles.npz
-python scripts/plot_dsm_multipoles.py  # produces outputs/dsm_multipoles.png
-
-# Density-split × galaxy  (requires tracer_bias in the config)
-python scripts/run_dsg_multipoles.py   # produces outputs/dsg_multipoles.npz
-python scripts/plot_dsg_multipoles.py  # produces outputs/dsg_multipoles.png
-
-# Model comparison (tree vs EFT modes)
-python scripts/plot_model_comparison.py  # → outputs/model_comparison/model_comparison.png
 ```
 
 ---
